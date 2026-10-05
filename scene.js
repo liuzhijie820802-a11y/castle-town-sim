@@ -16,7 +16,7 @@ const RULES={
     {id:'H7',name:'尺度合理（人高 1.75 米）'},
     {id:'H8',name:'都在地块内'},
     {id:'H9',name:'改地形不动河道'}],
-  soft:{townDownhill:1.0, denseNearCastle:1.0, houseSpacing:6, roadSlope:6.0, roadWater:0.4, earthWeight:1.0, maxGrade:0.12, wallContour:0.5}
+  soft:{townDownhill:1.0, denseNearCastle:1.0, houseSpacing:6, backRow:0.35, roadSlope:6.0, roadWater:0.4, earthWeight:1.0, maxGrade:0.12, wallContour:0.5}
 };
 const DIM={PERSON_H:1.75, MAIN_W:5, ROAD_W:4, WALL_T:2.5, PARAPET:0.5, WALL_H:7, GATE_W:4, GATE_H:4.5, MIN_DOOR:2.2, MIN_WALK:1.5, MIN_STORY:2.6};
 const COL={wall:[150,146,136],tower:[128,124,116],lintel:[140,136,126],keep:[176,166,148],inner:[168,150,120],house:[204,184,142],roof:[150,72,52],
@@ -176,28 +176,35 @@ function build(ctx){
   const stalls=[];for(let k=0;k<4;k++){const a=aT+Math.PI/4+k*Math.PI/2,b={kind:'stall',x:T[0]+Math.cos(a)*7,z:T[1]+Math.sin(a)*7,w:1.6,d:2.2,yaw:a};
     if(!inMap(b.x,b.z,2)||wet(b,0.5))continue;b.y1=gmax(b)+2.4;add(b);stalls.push(a);}
 
-  // 6. 房屋：沿路两侧列出候选地块，按“土方少、离城堡近、离河远”打分，好地先建，建一栋平整一块地基
+  // 6. 房屋：沿路两侧划出临街地块（第一排）和后排地块（第二排）；每块地试几种退后距离和尺寸，
+  //    按“土方少、离城堡近、离河远”打分，好地先建，每块地只建一栋，建一栋平整一块地基
   const sp=RULES.soft.houseSpacing,target=Math.round((K.townR-K.r)*1.1),cands=[],RJ={far:0,square:0,map:0,wet:0,steep:0,road:0,overlap:0};S.rejects=RJ;
+  let slotId=0;
   for(const r of S.roads){let acc=0;const p=r.pts;
     for(let i=1;i<p.length;i++){acc+=2;if(acc<sp)continue;acc=0;if(r.deck[i]!==null)continue;
       const yaw=Math.atan2(p[i][1]-p[i-1][1],p[i][0]-p[i-1][0]),nx=-Math.sin(yaw),nz=Math.cos(yaw);
-      for(const side of [-1,1])for(const extra of [0,2.5]){const w=6+rnd()*3,d=5+rnd()*2,h=3.5+rnd()*3.5,off=r.w/2+1.6+extra+d/2,jit=rnd()-extra*0.08;
-        const b={kind:'house',x:p[i][0]+nx*side*off,z:p[i][1]+nz*side*off,w,d,yaw},dc=Math.hypot(b.x-K.x,b.z-K.z);
-        if(dc>K.townR*1.3||dc<S.rOut+7){RJ.far++;continue;}
-        if(corners(b).concat([[b.x,b.z]]).some(q=>Math.hypot(q[0]-T[0],q[1]-T[1])<S.square.r+1.5)){RJ.square++;continue;}
-        if(corners(b).some(q=>!inMap(q[0],q[1],1))){RJ.map++;continue;}if(wet(b,1.5)){RJ.wet++;continue;}
-        b.sx=p[i][0]+nx*side*(r.w/2+0.5);b.sz=p[i][1]+nz*side*(r.w/2+0.5);
-        const f=footprint(b).map(q=>heightAt(q[0],q[1])),mean=f.reduce((x,y)=>x+y,0)/f.length,dev=f.reduce((x,y)=>x+Math.abs(y-mean),0)/f.length;
-        if(Math.max(...f)-Math.min(...f)>7){RJ.steep++;continue;}
-        const score=-RULES.soft.earthWeight*dev-RULES.soft.denseNearCastle*(dc-S.rOut)/(K.townR-S.rOut+10)*1.5-(riverDist(b.x,b.z)<BED+8?0.4:0)+jit*0.3;
-        cands.push({b,h,score});}}}
-  cands.sort((a,b)=>b.score-a.score);let built=0;
-  for(const c of cands){if(built>=target)break;const b=c.b;
-    if(footprint(b).some(q=>S.roads.some(rr=>roadDist(rr,q[0],q[1])<rr.w/2+0.6))){RJ.road++;continue;}
+      for(const side of [-1,1])for(const row of [0,1,2]){const slot=slotId++,W=6+rnd()*3,D=5+rnd()*2,h=3.5+rnd()*3.5,jit=rnd();
+        for(const [k,push] of [[1,0],[1,1.5],[0.8,0],[0.8,1.5],[0.8,3],[0.65,0.5],[0.65,2]]){
+          const w=Math.max(4.5,W*k),d=Math.max(4,D*k),off=r.w/2+1.6+push+row*(D+2)+d/2;
+          const b={kind:'house',x:p[i][0]+nx*side*off,z:p[i][1]+nz*side*off,w,d,yaw,row},dc=Math.hypot(b.x-K.x,b.z-K.z);
+          if(dc>K.townR*1.3||dc<S.rOut+7){RJ.far++;continue;}
+          if(corners(b).concat([[b.x,b.z]]).some(q=>Math.hypot(q[0]-T[0],q[1]-T[1])<S.square.r+1.5)){RJ.square++;continue;}
+          if(corners(b).some(q=>!inMap(q[0],q[1],1))){RJ.map++;continue;}if(wet(b,1.5)){RJ.wet++;continue;}
+          b.sx=p[i][0]+nx*side*(r.w/2+0.5);b.sz=p[i][1]+nz*side*(r.w/2+0.5);
+          const f=footprint(b).map(q=>heightAt(q[0],q[1])),mean=f.reduce((x,y)=>x+y,0)/f.length,dev=f.reduce((x,y)=>x+Math.abs(y-mean),0)/f.length;
+          if(Math.max(...f)-Math.min(...f)>7){RJ.steep++;continue;}
+          const score=-RULES.soft.earthWeight*dev-RULES.soft.denseNearCastle*(dc-S.rOut)/(K.townR-S.rOut+10)*1.5-(riverDist(b.x,b.z)<BED+8?0.4:0)
+            -row*RULES.soft.backRow-push*0.05-(k<1?0.1:0)+jit*0.3;
+          cands.push({b,h,score,slot});}}}}
+  for(const r of S.roads){let x0=1e9,z0=1e9,x1=-1e9,z1=-1e9;for(const q of r.pts){x0=Math.min(x0,q[0]);z0=Math.min(z0,q[1]);x1=Math.max(x1,q[0]);z1=Math.max(z1,q[1]);}r.bb=[x0,z0,x1,z1];}
+  const nearRoad=(x,z,m)=>S.roads.some(r=>{const e=r.w/2+m;return x>=r.bb[0]-e&&x<=r.bb[2]+e&&z>=r.bb[1]-e&&z<=r.bb[3]+e&&roadDist(r,x,z)<e;});
+  cands.sort((a,b)=>b.score-a.score);let built=0;const used=new Set();
+  for(const c of cands){if(built>=target)break;if(used.has(c.slot))continue;const b=c.b;
+    if(footprint(b).some(q=>nearRoad(q[0],q[1],0.6))){RJ.road++;continue;}
     if(S.boxes.some(o=>overlapRect(o,b,0.8))){RJ.overlap++;continue;}
-    const lo=gmin(b),hi=gmax(b),y=heightAt(b.sx,b.sz); // 地基与街面同高：临街一侧接路面，后面挖或填
+    const lo=gmin(b),hi=gmax(b),y=b.row?gmean(b):heightAt(b.sx,b.sz); // 临街房地基与街面同高；后排房取地块平均高度
     ed.rect(b,y,1.5,2+1.5*(hi-lo));
-    b.y1=y+c.h;b.h=c.h;b.cut=Math.max(0,hi-y);b.fill=Math.max(0,y-lo);delete b.sx;delete b.sz;add(b);built++;}
+    b.y1=y+c.h;b.h=c.h;b.cut=Math.max(0,hi-y);b.fill=Math.max(0,y-lo);delete b.sx;delete b.sz;add(b);built++;used.add(c.slot);}
   S.houseCands=cands.length;
 
   // 7. 农田：挑平缓的地，长边顺等高线
