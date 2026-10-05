@@ -72,6 +72,26 @@ with sync_playwright() as p:
     pg.click("#cauto"); pg.wait_for_timeout(200); k4 = pg.evaluate("sim.castle()")
     check("恢复自动选址", not k4["manual"] and abs(k4["x"]-k["x"]) < 0.01 and abs(k4["z"]-k["z"]) < 0.01)
 
+    # ===== 主体雏形 + 硬规则 =====
+    pg.goto("about:blank"); pg.goto(base + "#seed=20261005&mode=2d"); pg.wait_for_timeout(1200)
+    sc = pg.evaluate("sim.scene()")
+    check("主体雏形各部分都生成了", sc and sc["walls"]>0 and sc["towers"]>0 and sc["houses"]>=15 and sc["roads"]>=3 and sc["people"]>=15 and sc["fields"]>0 and sc["gate"], json.dumps(sc, ensure_ascii=False))
+    au = pg.evaluate("sim.audit()")
+    check("默认种子硬规则全部满足", au["total"]==0, json.dumps(au["cnt"]) + json.dumps(au["items"][:3], ensure_ascii=False))
+    bad = pg.evaluate("""()=>{const b=[];for(let s=1;s<=20;s++){sim.generate(s);const a=sim.audit();if(a.total)b.push(s+':'+JSON.stringify(a.cnt)+JSON.stringify(a.items.slice(0,2)));}sim.generate(20261005);return b}""")
+    check("20 个种子硬规则全部满足", not bad, "; ".join(bad)[:600])
+    bad2 = pg.evaluate("""()=>{const b=[];for(const o of [{walls:3,town:'l',relief:1.5},{walls:1,town:'s',river:false,relief:0.5},{walls:2,town:'l',river:true,relief:1.2}]){sim.setParams(o);for(let s=101;s<=105;s++){sim.generate(s);const a=sim.audit();if(a.total)b.push(JSON.stringify(o)+s+':'+JSON.stringify(a.cnt)+JSON.stringify(a.items.slice(0,2)));}}sim.setParams({walls:2,town:'m',river:true,relief:1});sim.generate(20261005);return b}""")
+    check("极端参数下硬规则全部满足", not bad2, "; ".join(bad2)[:600])
+    print("  （生成整个场景耗时 %.0f 毫秒）" % pg.evaluate("sim.sceneMs()"))
+    rp = pg.evaluate("""()=>{for(let z=60;z<=196;z+=4)for(let x=30;x<=226;x+=2)if(sim.riverDist(x,z)<1)return [x,z];return null}""")
+    pg.evaluate(f"sim.setCastle({rp[0]},{rp[1]})")
+    au2 = pg.evaluate("sim.audit()")
+    check("城堡拖进河里时，系统自己报出违反", au2["cnt"]["H2"]>0 and "⚠" in pg.inner_text("#status") and "✗" in pg.inner_text("#rules"), f'H2={au2["cnt"]["H2"]}，状态栏：{pg.inner_text("#status")}')
+    shot(pg, "shot_scene_bad.png")
+    pg.evaluate("sim.resetCastle()")
+    check("恢复自动选址后重新全部满足", pg.evaluate("sim.audit().total")==0)
+    shot(pg, "shot_scene2d.png")
+
     # ===== 3D =====
     pg.click("#m3d"); pg.wait_for_timeout(800)
     check("切换到 3D 模式", pg.evaluate("sim.state().mode") == "3d")
@@ -80,6 +100,10 @@ with sync_playwright() as p:
     shot(pg, "shot_3d.png")
     px3 = pg.evaluate("""()=>{const c=document.getElementById('c3d');const g=c.getContext('webgl');const d=new Uint8Array(4);g.readPixels(c.width/2,c.height/2,1,1,g.RGBA,g.UNSIGNED_BYTE,d);return Array.from(d)}""")
     check("3D 画面中心有地形", abs(px3[0]-168)+abs(px3[1]-189)+abs(px3[2]-214) > 30, str(px3))
+    pg.evaluate("sim.setCam(-0.75,0.55,300)"); pg.wait_for_timeout(300); shot(pg, "shot_scene3d.png")
+    t = pg.evaluate("sim.townCenter()")
+    pg.evaluate(f"sim.setCam(-0.9,0.35,80,{t[0]},{t[1]})"); pg.wait_for_timeout(300); shot(pg, "shot_town3d.png")
+    pg.evaluate("sim.setCam(-0.75,0.55,340)"); pg.wait_for_timeout(200)
     # 3D 城堡范围显示
     n3 = pg.evaluate("sim.overlayCount()")
     check("3D 生成了城堡范围几何", n3 > 0, f"{n3} 个顶点")
