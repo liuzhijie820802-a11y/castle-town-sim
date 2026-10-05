@@ -29,6 +29,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
 #panel button:disabled{opacity:.45;cursor:default}
 #panel .tip{font-size:11px;color:#8a909c;margin-top:6px;line-height:1.5}
 #cmode.manual{color:#ffb347}
+#lbl3d{position:absolute;display:none;transform:translate(-50%,-100%);background:rgba(20,22,26,.8);color:#fff;font-size:12px;padding:2px 7px;border-radius:3px;pointer-events:none;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -57,6 +58,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
   </div>
   <div id="hud"></div>
   <div id="probe"></div>
+  <div id="lbl3d"></div>
 </div>
 <script>
 'use strict';
@@ -217,6 +219,7 @@ C2.addEventListener('mousemove',ev=>{
 
 // ===== 3D 视角（原生 WebGL，无外部库）=====
 let gl=null, prog=null, loc={}, vbo=null, ibo=null, idxCount=0;
+let lprog=null, lloc={}, ovbo=null, ovCount=0; S.overlay3d=true;   // 3D 叠加层：城墙、城镇范围、城堡标杆
 const cam={yaw:-0.75, pitch:0.55, dist:340, target:[CFG.SIZE/2,6,CFG.SIZE/2]};
 function init3D(){
   gl=C3.getContext('webgl',{antialias:true,preserveDrawingBuffer:true});
@@ -235,7 +238,33 @@ function init3D(){
   const N=CFG.N, idx=new Uint16Array((N-1)*(N-1)*6); let k=0;
   for(let j=0;j<N-1;j++)for(let i=0;i<N-1;i++){const a=j*N+i,b=a+1,c=a+N,d=c+1;idx[k++]=a;idx[k++]=c;idx[k++]=b;idx[k++]=b;idx[k++]=c;idx[k++]=d;}
   idxCount=k; ibo=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idx,gl.STATIC_DRAW);
+  const lvs=`attribute vec3 aPos;attribute vec4 aCol;uniform mat4 uMVP;varying vec4 vC;void main(){vC=aCol;gl_Position=uMVP*vec4(aPos,1.0);}`;
+  const lfs=`precision mediump float;varying vec4 vC;void main(){gl_FragColor=vC;}`;
+  lprog=gl.createProgram();gl.attachShader(lprog,sh(gl.VERTEX_SHADER,lvs));gl.attachShader(lprog,sh(gl.FRAGMENT_SHADER,lfs));gl.linkProgram(lprog);
+  if(!gl.getProgramParameter(lprog,gl.LINK_STATUS)) S.errors.push('叠加层着色器链接失败: '+gl.getProgramInfoLog(lprog));
+  lloc={aPos:gl.getAttribLocation(lprog,'aPos'),aCol:gl.getAttribLocation(lprog,'aCol'),uMVP:gl.getUniformLocation(lprog,'uMVP')};
+  ovbo=gl.createBuffer();
   vbo=gl.createBuffer(); S.webgl=true;
+}
+function hexCol(h,a){return [parseInt(h.slice(1,3),16)/255,parseInt(h.slice(3,5),16)/255,parseInt(h.slice(5,7),16)/255,a];}
+function pushRibbon(out,cx,cz,r,w,col,a0,a1,lift){ // 贴地的圆环带（角度 a0 到 a1），超出地块的部分不画
+  const seg=Math.max(2,Math.ceil((a1-a0)*r));
+  const p=(t,rr)=>{const x=cx+Math.cos(t)*rr,z=cz+Math.sin(t)*rr;return [x,heightAt(x,z)+lift,z];};
+  for(let s=0;s<seg;s++){const t0=a0+(a1-a0)*s/seg,t1=a0+(a1-a0)*(s+1)/seg;
+    const A=p(t0,r-w/2),B=p(t0,r+w/2),C=p(t1,r-w/2),D=p(t1,r+w/2);
+    if([A,B,C,D].some(v=>v[0]<0||v[2]<0||v[0]>CFG.SIZE||v[2]>CFG.SIZE)) continue;
+    for(const v of [A,B,C,B,D,C]) out.push(v[0],v[1],v[2],col[0],col[1],col[2],col[3]);}}
+function pushPole(out,x,z,h0,h1,w,col){const o=w/2;
+  for(const [dx,dz] of [[o,0],[0,o]]){const A=[x-dx,h0,z-dz],B=[x+dx,h0,z+dz],C=[x-dx,h1,z-dz],D=[x+dx,h1,z+dz];
+    for(const v of [A,B,C,B,D,C]) out.push(v[0],v[1],v[2],col[0],col[1],col[2],col[3]);}}
+function buildOverlay3D(){
+  const k=castle(), out=[], col=hexCol(k.inWater?'#ff5a5a':(k.manual?'#ffb347':'#f0d080'),1), tc=[235/255,205/255,130/255,0.85];
+  for(let w=0;w<k.walls;w++) pushRibbon(out,k.x,k.z,k.r-w*6,w===0?1.2:0.7,col,0,Math.PI*2,0.5);
+  const n=Math.round(k.townR*Math.PI*2/8);
+  for(let d=0;d<n;d++){const a=d/n*Math.PI*2;pushRibbon(out,k.x,k.z,k.townR,0.8,tc,a,a+Math.PI*2/n*0.55,0.5);}
+  const h=heightAt(k.x,k.z); pushPole(out,k.x,k.z,h,h+14,0.8,col);
+  gl.bindBuffer(gl.ARRAY_BUFFER,ovbo); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(out),gl.DYNAMIC_DRAW); ovCount=out.length/7;
+  return {x:k.x,y:h+14,z:k.z,label:'城堡（'+(k.manual?'手动':'自动')+(k.inWater?'·压到河道':'')+'）'};
 }
 function build3D(){
   mapCache=null; if(!gl) return;
@@ -252,14 +281,28 @@ function eyePos(){const cp=Math.cos(cam.pitch);return [cam.target[0]+cam.dist*cp
 function render3D(){
   if(!gl||S.mode!=='3d') return; fitCanvas(C3);
   gl.viewport(0,0,C3.width,C3.height); gl.clearColor(0.66,0.74,0.84,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST);
-  gl.useProgram(prog); const e=eyePos();
-  gl.uniformMatrix4fv(loc.uMVP,false,new Float32Array(mul(persp(0.9,C3.width/C3.height,1,3000),lookAt(e,cam.target,[0,1,0]))));
+  gl.useProgram(prog); const e=eyePos(), mvp=mul(persp(0.9,C3.width/C3.height,1,3000),lookAt(e,cam.target,[0,1,0])), mvpF=new Float32Array(mvp);
+  gl.uniformMatrix4fv(loc.uMVP,false,mvpF);
   const s=[-0.5,0.7,-0.45],l=Math.hypot(...s); gl.uniform3f(loc.uSun,s[0]/l,s[1]/l,s[2]/l); gl.uniform3f(loc.uEye,e[0],e[1],e[2]);
   gl.bindBuffer(gl.ARRAY_BUFFER,vbo);
   gl.enableVertexAttribArray(loc.aPos);gl.vertexAttribPointer(loc.aPos,3,gl.FLOAT,false,36,0);
   gl.enableVertexAttribArray(loc.aNrm);gl.vertexAttribPointer(loc.aNrm,3,gl.FLOAT,false,36,12);
   gl.enableVertexAttribArray(loc.aCol);gl.vertexAttribPointer(loc.aCol,3,gl.FLOAT,false,36,24);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo); gl.drawElements(gl.TRIANGLES,idxCount,gl.UNSIGNED_SHORT,0);
+  const lbl=$('lbl3d');
+  if(S.overlay3d&&lprog){
+    const info=buildOverlay3D();
+    for(let a=0;a<3;a++) gl.disableVertexAttribArray(a);
+    gl.useProgram(lprog); gl.uniformMatrix4fv(lloc.uMVP,false,mvpF); gl.bindBuffer(gl.ARRAY_BUFFER,ovbo);
+    gl.enableVertexAttribArray(lloc.aPos);gl.vertexAttribPointer(lloc.aPos,3,gl.FLOAT,false,28,0);
+    gl.enableVertexAttribArray(lloc.aCol);gl.vertexAttribPointer(lloc.aCol,4,gl.FLOAT,false,28,12);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA); gl.drawArrays(gl.TRIANGLES,0,ovCount); gl.disable(gl.BLEND);
+    gl.disableVertexAttribArray(lloc.aPos); gl.disableVertexAttribArray(lloc.aCol);
+    const m=mvp, x=info.x, y=info.y, z=info.z, cw=m[3]*x+m[7]*y+m[11]*z+m[15];
+    if(cw>0){const nx=(m[0]*x+m[4]*y+m[8]*z+m[12])/cw, ny=(m[1]*x+m[5]*y+m[9]*z+m[13])/cw;
+      lbl.style.display='block'; lbl.style.left=((nx+1)/2*C3.clientWidth)+'px'; lbl.style.top=((1-ny)/2*C3.clientHeight)+'px'; lbl.textContent=info.label;}
+    else lbl.style.display='none';
+  } else lbl.style.display='none';
 }
 let drag=null; C3.addEventListener('contextmenu',e=>e.preventDefault());
 C3.addEventListener('mousedown',e=>{drag={b:e.button,x:e.clientX,y:e.clientY};});
@@ -274,7 +317,7 @@ C3.addEventListener('wheel',e=>{e.preventDefault();cam.dist=Math.min(900,Math.ma
 function setMode(m){S.mode=(m==='3d')?'3d':'2d';
   C2.style.display=S.mode==='2d'?'block':'none'; C3.style.display=S.mode==='3d'?'block':'none';
   $('m2d').classList.toggle('on',S.mode==='2d'); $('m3d').classList.toggle('on',S.mode==='3d');
-  refresh(); writeHash();}
+  $('lbl3d').style.display='none'; refresh(); writeHash();}
 function setParams(o){Object.assign(P,o); clampCastle(); generate();}
 function resetCastle(){O.castle=null; syncPanel(); refresh(); writeHash();}
 function syncPanel(){
@@ -288,7 +331,7 @@ function refresh(){ if(!S.heights) return;
   $('hud').innerHTML='种子 '+P.seed+'　地形起伏 '+Number(P.relief).toFixed(1)+'<br>地块 '+CFG.SIZE+' × '+CFG.SIZE+' 米　高度 '+S.minH.toFixed(1)+' ~ '+S.maxH.toFixed(1)+' 米'
     +'<br>河流 '+(P.river?'有':'无')+'　城镇 '+TOWN[P.town].name+'<br>城墙 '+P.walls+' 层（外墙半径 '+k.r+' 米）'
     +'<br>城堡 ('+k.x.toFixed(0)+', '+k.z.toFixed(0)+') '+(k.manual?'手动':'自动')
-    +'<br><span style="color:#8a909c">当前为占位地形<br>城堡和城镇目前只在 2D 里画范围示意</span>';
+    +'<br><span style="color:#8a909c">当前为占位地形<br>城堡和城镇目前只画范围示意</span>';
   if(S.mode==='3d') $('probe').innerHTML='左键拖动：旋转<br>右键 / Shift+拖动：平移<br>滚轮：缩放'; else if(!/^X /.test($('probe').innerHTML)) $('probe').innerHTML='移动鼠标到地形上查看坐标';
   $('status').textContent=S.flash||(S.errors.length?('⚠ '+S.errors[0]):(k.inWater?'⚠ 城堡压到了河道':'就绪'));
 }
@@ -318,6 +361,7 @@ window.addEventListener('resize',refresh);
 
 // 供验证环境调用的接口
 window.sim={generate,setMode,heightAt,setParams,castle,riverDist,isWater,resetCastle,
+  setOverlay3D:b=>{S.overlay3d=!!b;refresh();}, overlayCount:()=>ovCount,
   params:()=>({...P}),
   setCastle:(x,z)=>{O.castle={x,z};clampCastle();syncPanel();refresh();writeHash();},
   toScreen:(x,z)=>{const v=S.view2d,r=C2.getBoundingClientRect();return {x:r.left+(v.ox+x*v.sc)/v.dpr,y:r.top+(v.oy+z*v.sc)/v.dpr};},
