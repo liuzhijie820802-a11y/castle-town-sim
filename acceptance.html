@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>验收指标 · 城堡+城镇</title>
+<style>
+body{margin:0;background:#1b1d22;color:#e8e8e8;font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;font-size:14px}
+.wrap{max-width:1120px;margin:0 auto;padding:22px 20px 40px}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:#9aa1b0;font-size:13px;margin-bottom:18px}
+.sub a{color:#e8c070}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+.tile{background:#25282f;border:1px solid #353944;border-radius:8px;padding:12px 14px}
+.tile .k{color:#9aa1b0;font-size:12px}.tile .v{font-size:22px;font-weight:600;margin:4px 0}.tile .n{color:#8a909c;font-size:12px;line-height:1.5}
+.bar{height:6px;background:#353944;border-radius:3px;overflow:hidden;margin-top:6px}.bar i{display:block;height:100%;background:#7bc07b}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px}
+.box{background:#25282f;border:1px solid #353944;border-radius:8px;padding:12px 14px;line-height:1.7}
+.box h3{margin:0 0 6px;font-size:14px;color:#e8c070}
+.fsr{display:flex;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap}
+.pill{border-radius:12px;padding:2px 10px;font-size:12px}
+.p-ok{background:#2f4a33;color:#a6e0a6}.p-bad{background:#5a2c2c;color:#ffb0b0}.p-wait{background:#3a3d46;color:#c9ced8}.p-todo{background:#30333b;color:#8a909c}
+.filters{margin:6px 0 10px;display:flex;gap:8px}
+.filters button{background:#363b47;border:1px solid #4a5060;color:#e8e8e8;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px}
+.filters button.on{background:#c98a3b;border-color:#c98a3b;color:#111}
+.stages{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px}
+.stage{background:#25282f;border:1px solid #353944;border-radius:8px;padding:12px 14px}
+.stage .hd{display:flex;justify-content:space-between;align-items:baseline;cursor:pointer}
+.stage .hd b{font-size:15px}.stage .hd span{color:#9aa1b0;font-size:12px}
+.stage .lab{color:#9aa1b0;font-size:12px;margin:10px 0 4px}
+.stage ul{margin:0;padding-left:18px;line-height:1.7}
+.chk{list-style:none;padding-left:0!important}
+.chk li{display:flex;gap:8px;align-items:flex-start}
+.chk li .dot{flex:none;width:9px;height:9px;border-radius:50%;margin-top:7px}
+.chk li.done .dot{background:#7bc07b}.chk li.todo .dot{border:1.5px solid #6a7080}
+.chk li.todo{color:#9aa1b0}
+.stage.collapsed .body{display:none}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #353944;vertical-align:top}
+th{color:#9aa1b0;font-weight:normal}
+.sec{margin:22px 0 8px;font-size:15px;font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>验收指标 · 城堡+城镇</h1>
+  <div class="sub">每个阶段分两层标准：<b>看起来对</b>由你看预览判断，<b>真的对</b>由验证脚本在真浏览器里自动检查。<a id="back" href="index.html">← 回到预览页</a></div>
+
+  <div class="tiles">
+    <div class="tile"><div class="k">自动检查进度</div><div class="v" id="tChecks"></div><div class="bar"><i id="tBar"></i></div><div class="n">绿色为已写进验证脚本的检查</div></div>
+    <div class="tile"><div class="k">假成功率 FSR</div><div class="v" id="tFsr"></div><div class="n" id="tFsrN"></div></div>
+    <div class="tile"><div class="k">待你验收</div><div class="v" id="tWait"></div><div class="n">看完在 Asana 卡片上回一句即可</div></div>
+    <div class="tile"><div class="k">收敛轮次</div><div class="v" id="tConv"></div><div class="n" id="tConvN"></div></div>
+  </div>
+
+  <div class="two">
+    <div class="box"><h3>假成功率（FSR）怎么算</h3>
+      假成功 = 验证脚本说"通过"，但你看了觉得"不对"。<br>
+      FSR = 假成功次数 ÷ 脚本判通过、且你已经给出结论的评审次数。<br>
+      每出现一次假成功，就把你指出的问题补成新的自动检查，让下次脚本能自己抓到。
+      <div class="fsr"><span class="pill p-ok">真通过</span><span class="pill p-bad">假成功</span><span class="pill p-wait">待你验收</span></div>
+    </div>
+    <div class="box"><h3>另外两条过程标准</h3>
+      收敛：一张卡从第一次交付到你验收通过用了几轮反馈。好的反馈应该让轮数越来越少。<br>
+      停在不可逆之前：会冲掉你手动修改的操作，先提示再执行；验证脚本没全过的版本，不推送到线上。
+    </div>
+  </div>
+
+  <div class="sec">各阶段标准</div>
+  <div class="filters"><button id="fAll" class="on">全部</button><button id="fTodo">只看还没实现的检查</button></div>
+  <div class="stages" id="stages"></div>
+
+  <div class="sec">评审记录</div>
+  <table><thead><tr><th>日期 · 对象</th><th>脚本结果</th><th>你的结论</th><th>判定</th></tr></thead><tbody id="log"></tbody></table>
+</div>
+<script>
+'use strict';
+const STAGES=[
+ {name:'阶段0 · 基础与验证环境',look:['打开页面马上看到地形，2D / 3D 一键切换','改参数后画面立刻变化','手动拖过的城堡位置不会被冲掉'],
+  checks:[['页面加载、全程无报错',1],['同一种子结果一致，不同种子结果不同',1],['网址能复现全部参数',1],['手动覆盖在改参数后保留，并可恢复自动',1],['3D 视角能看到城堡范围（开关叠加层像素差 > 500）',1],['一条命令跑完，输出清单和截图',1]]},
+ {name:'阶段1 · 地形',look:['换 3 个种子，得到 3 种不同但都合理的地形','山丘、平原、河流一眼可辨','编辑地形时，上面的东西跟着贴合'],
+  checks:[['高度在 0 ~ 32 米之间',1],['河流开关有效，河道贯穿地块',1],['相邻网格高差不超过 3 米（没有尖刺）',0],['可建造区坡度不超过 15°',0],['编辑地形后，建筑底面与地面高差小于 0.1 米',0]]},
+ {name:'阶段2 · 城堡',look:['城墙顺着山势闭合，塔楼位置自然','城门朝向城镇主路','内部建筑像长出来的，不是方块堆'],
+  checks:[['城堡不压河道（20 个种子）',1],['城墙闭合，没有断口',0],['墙基离地悬空小于 0.2 米',0],['门高不低于 2.2 米，城墙走道宽不低于 1.5 米（以人高 1.75 米为基准）',0],['楼梯踏步高 15 ~ 20 厘米',0],['建筑之间不穿模',0]]},
+ {name:'阶段3 · 城镇',look:['道路从城门自然长出去','房屋朝向道路，越靠近城堡越密','在街上抬头能看到城堡'],
+  checks:[['所有道路都连通到城门',0],['道路坡度不超过 12%',0],['房屋不压路、不互相重叠',0],['过河处都有桥',0],['至少 60% 的街道采样点能看到城堡',0]]},
+ {name:'阶段4 · 角色与磁吸放置',look:['守卫在城墙，商贩在集市，村民在街道和田里','拖动角色时吸附自然'],
+  checks:[['任意位置放置，脚底与表面高差小于 5 厘米',0],['角色只站在可行走面上',0],['角色间距不小于 0.5 米，不重叠',0],['角色身份与所在区域匹配',0]]},
+ {name:'阶段5 · 材质 · 光照 · 渲染',look:['材质风格统一','清晨、正午、黄昏的氛围对','每个机位构图有焦点'],
+  checks:[['阴影方向与太阳方向夹角小于 5°',0],['3 ~ 5 个机位都能完整框住城堡',0],['没有缺失或加载失败的材质',0]]},
+ {name:'阶段6 · 整合与验收',look:['一键生成的完整场景，你看了觉得可以'],
+  checks:[['20 个种子全流程无报错',0],['全部自动检查通过',0],['假成功率 FSR 不超过 10%',0]]}];
+// verdict: ok 真通过 / false 假成功 / pending 待你验收
+const REVIEWS=[
+ {date:'10-05',what:'0.1 可视化预览页',auto:'11 / 11 通过',human:'待你验收',verdict:'pending'},
+ {date:'10-05',what:'0.2 验证环境',auto:'11 / 11 通过',human:'待你验收',verdict:'pending'},
+ {date:'10-05',what:'0.3 种子与参数面板',auto:'24 / 24 通过',human:'3D 视角里看不到城堡范围',verdict:'false',fix:'补上 3D 城墙、城镇范围和标签，新增 5 项检查'},
+ {date:'10-05',what:'0.3 补修：3D 城堡范围显示',auto:'29 / 29 通过',human:'待你验收',verdict:'pending'}];
+const CONV=[{card:'0.3',rounds:2,done:false}];
+const $=id=>document.getElementById(id);
+function stats(){let done=0,all=0;for(const s of STAGES)for(const c of s.checks){all++;if(c[1])done++;}
+  const judged=REVIEWS.filter(r=>r.verdict!=='pending'), bad=judged.filter(r=>r.verdict==='false').length;
+  return {done,all,judged:judged.length,bad,wait:REVIEWS.filter(r=>r.verdict==='pending').length};}
+let onlyTodo=false;
+function render(){const st=stats();
+  $('tChecks').textContent=st.done+' / '+st.all; $('tBar').style.width=(st.done/st.all*100).toFixed(1)+'%';
+  $('tFsr').textContent=st.judged?Math.round(st.bad/st.judged*100)+'%':'暂无';
+  $('tFsrN').textContent='假成功 '+st.bad+' / '+st.judged+' 次评审'+(st.judged<5?'，样本太少，仅作起点':'');
+  $('tWait').textContent=st.wait+' 项';
+  const c=CONV[0]; $('tConv').textContent=c.rounds+' 轮'; $('tConvN').textContent=c.card+(c.done?' 已验收':' 目前用了 '+c.rounds+' 轮，还没验收');
+  $('stages').innerHTML=STAGES.map((s,i)=>{const d=s.checks.filter(c=>c[1]).length;
+    const items=s.checks.filter(c=>!onlyTodo||!c[1]).map(c=>'<li class="'+(c[1]?'done':'todo')+'"><span class="dot"></span><span>'+c[0]+(c[1]?'':'（待实现）')+'</span></li>').join('');
+    return '<div class="stage" data-i="'+i+'"><div class="hd"><b>'+s.name+'</b><span>自动检查 '+d+' / '+s.checks.length+'</span></div><div class="body">'
+      +'<div class="lab">看起来对（你看）</div><ul>'+s.look.map(t=>'<li>'+t+'</li>').join('')+'</ul>'
+      +'<div class="lab">真的对（脚本检查）</div><ul class="chk">'+(items||'<li class="done"><span class="dot"></span><span>本阶段检查都已实现</span></li>')+'</ul></div></div>';}).join('');
+  document.querySelectorAll('.stage .hd').forEach(h=>h.onclick=()=>h.parentElement.classList.toggle('collapsed'));
+  const P={ok:['p-ok','真通过'],false:['p-bad','假成功'],pending:['p-wait','待你验收']};
+  $('log').innerHTML=REVIEWS.map(r=>'<tr><td>'+r.date+' · '+r.what+'</td><td>'+r.auto+'</td><td>'+r.human+(r.fix?'<br><span style="color:#8a909c">处理：'+r.fix+'</span>':'')+'</td><td><span class="pill '+P[r.verdict][0]+'">'+P[r.verdict][1]+'</span></td></tr>').join('');}
+$('fAll').onclick=()=>{onlyTodo=false;$('fAll').classList.add('on');$('fTodo').classList.remove('on');render();};
+$('fTodo').onclick=()=>{onlyTodo=true;$('fTodo').classList.add('on');$('fAll').classList.remove('on');render();};
+// 在线预览服务里，把"回到预览页"指向同一仓库的 index.html
+(function(){const m=location.href.match(/^(https:\/\/htmlpreview\.github\.io\/\?.*\/)acceptance\.html/);if(m)$('back').href=m[1]+'index.html';})();
+render();
+window.acc={stats,STAGES,REVIEWS};
+</script>
+</body>
+</html>
