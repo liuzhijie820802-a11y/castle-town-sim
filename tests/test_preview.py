@@ -1,53 +1,91 @@
-import sys, json
+import sys, os, json
 from playwright.sync_api import sync_playwright
-# 用法: python3 test_preview.py [页面网址]，默认测试本地 index.html
-import os
-url = sys.argv[1] if len(sys.argv) > 1 else "file://" + os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "index.html"))
+# 用法: python3 tests/test_preview.py [页面网址]，默认测试本地 index.html
+HERE = os.path.dirname(os.path.abspath(__file__))
+url = sys.argv[1] if len(sys.argv) > 1 else "file://" + os.path.abspath(os.path.join(HERE, "..", "index.html"))
+base = url.split("#")[0]
+H3 = "[sim.heightAt(50,70),sim.heightAt(200,30),sim.heightAt(128,128)]"
 results = []
 def check(name, ok, detail=""):
     results.append((name, bool(ok), detail)); print(("通过" if ok else "失败"), name, detail)
+def shot(pg, name):
+    pg.screenshot(path=os.path.join(HERE, name))
 with sync_playwright() as p:
     b = p.chromium.launch(args=["--use-angle=swiftshader","--enable-unsafe-swiftshader","--ignore-gpu-blocklist"])
     pg = b.new_page(viewport={"width":1280,"height":800})
     logs = []
     pg.on("console", lambda m: logs.append(m.type+": "+m.text))
     pg.on("pageerror", lambda e: logs.append("pageerror: "+str(e)))
-    pg.goto(url.split("#")[0] + "#seed=20261005&mode=2d"); pg.wait_for_timeout(800)
+    pg.goto(base + "#seed=20261005&mode=2d"); pg.wait_for_timeout(1000)
+
+    # ===== 基础（0.1）=====
     st = pg.evaluate("sim.state()")
     check("页面加载无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), json.dumps(st["errors"], ensure_ascii=False))
     check("WebGL 可用", st["webgl"])
     check("高度范围合理", 0 <= st["minH"] < st["maxH"] <= 32, f'{st["minH"]:.2f}~{st["maxH"]:.2f}')
-    pg.screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "shot_2d.png"))
-    # 2D 画布不是空白
+    shot(pg, "shot_2d.png")
     px = pg.evaluate("""()=>{const c=document.getElementById('c2d');const d=c.getContext('2d').getImageData(c.width/2,c.height/2,1,1).data;return Array.from(d)}""")
     check("2D 画面有内容", px[:3] != [27,29,34], str(px))
-    # 同一种子可复现
-    h1 = pg.evaluate("[sim.heightAt(50,70),sim.heightAt(200,30),sim.heightAt(128,128)]")
-    pg.evaluate("sim.generate(123)"); pg.evaluate("sim.generate(20261005)")
-    h2 = pg.evaluate("[sim.heightAt(50,70),sim.heightAt(200,30),sim.heightAt(128,128)]")
-    check("同一种子结果一致", h1 == h2)
+    h1 = pg.evaluate(H3); pg.evaluate("sim.generate(123)"); pg.evaluate("sim.generate(20261005)")
+    check("同一种子结果一致", h1 == pg.evaluate(H3))
     pg.evaluate("sim.generate(777)")
-    h3 = pg.evaluate("[sim.heightAt(50,70),sim.heightAt(200,30),sim.heightAt(128,128)]")
-    check("不同种子结果不同", h3 != h1)
+    check("不同种子结果不同", pg.evaluate(H3) != h1)
     pg.evaluate("sim.generate(20261005)")
-    # 切换到 3D
+
+    # ===== 参数面板（0.3）=====
+    check("参数面板控件齐全", pg.evaluate("['relief','river','town','walls','cauto','copy'].every(id=>!!document.getElementById(id))"))
+    pg.evaluate("sim.setParams({river:false})"); w_off = pg.evaluate("sim.waterCount()")
+    pg.evaluate("sim.setParams({river:true})"); w_on = pg.evaluate("sim.waterCount()")
+    check("河流开关有效（开有水、关无水）", w_on > 0 and w_off == 0, f"开 {w_on} 个水面点，关 {w_off} 个")
+    k = pg.evaluate("sim.castle()")
+    check("自动选址：城堡在地块内", k["r"] <= k["x"] <= 256-k["r"] and k["r"] <= k["z"] <= 256-k["r"], f'({k["x"]:.0f}, {k["z"]:.0f}) 外墙半径 {k["r"]} 米')
+    rd = pg.evaluate(f'sim.riverDist({k["x"]},{k["z"]})')
+    check("自动选址：城堡不压河道", not k["inWater"] and rd >= k["r"], f"中心离河 {rd:.1f} 米")
+    bad = pg.evaluate("""()=>{const b=[];for(let s=1;s<=20;s++){sim.generate(s);const k=sim.castle();if(k.inWater||sim.riverDist(k.x,k.z)<k.r)b.push(s);}sim.generate(20261005);return b}""")
+    check("20 个种子自动选址都不压河道", not bad, str(bad))
+    r1 = pg.evaluate("sim.castle().r"); pg.evaluate("sim.setParams({walls:3})"); r3 = pg.evaluate("sim.castle().r")
+    check("城墙层数影响城堡大小", r3 > r1, f"{r1} → {r3} 米")
+    t1 = pg.evaluate("sim.castle().townR"); pg.evaluate("sim.setParams({town:'l'})"); t2 = pg.evaluate("sim.castle().townR")
+    check("城镇规模影响城镇范围", t2 > t1, f"{t1} → {t2} 米")
+    m1 = pg.evaluate("sim.state().maxH"); pg.evaluate("sim.setParams({relief:0.6})"); m2 = pg.evaluate("sim.state().maxH")
+    check("地形起伏影响高度", m2 < m1, f"最高 {m1:.1f} → {m2:.1f} 米")
+    # 网址复现全部参数
+    pg.evaluate("sim.setParams({relief:1.3,river:false,town:'s',walls:1})")
+    href = pg.evaluate("location.href"); hs = pg.evaluate(H3); kc = pg.evaluate("sim.castle()")
+    pg.goto("about:blank"); pg.goto(href); pg.wait_for_timeout(800)
+    same = pg.evaluate("sim.params()") == {"seed":20261005,"relief":1.3,"river":False,"town":"s","walls":1} and pg.evaluate(H3) == hs and pg.evaluate("sim.castle()") == kc
+    check("网址可复现全部参数", same, href.split("#")[1])
+
+    # ===== 人工覆盖：拖动城堡 =====
+    pg.goto("about:blank"); pg.goto(base + "#seed=20261005&mode=2d"); pg.wait_for_timeout(800)
+    k = pg.evaluate("sim.castle()")
+    tx, tz = (70 if k["x"] > 128 else 186), (k["z"] if 60 < k["z"] < 196 else 128)
+    a = pg.evaluate(f'sim.toScreen({k["x"]},{k["z"]})'); t = pg.evaluate(f"sim.toScreen({tx},{tz})")
+    pg.mouse.move(a["x"], a["y"]); pg.mouse.down(); pg.mouse.move(t["x"], t["y"], steps=10); pg.mouse.up(); pg.wait_for_timeout(300)
+    k2 = pg.evaluate("sim.castle()")
+    check("2D 里可拖动城堡（手动覆盖）", k2["manual"] and abs(k2["x"]-tx) < 3 and abs(k2["z"]-tz) < 3, f'({k["x"]:.0f},{k["z"]:.0f}) → ({k2["x"]:.0f},{k2["z"]:.0f})')
+    check("面板显示手动状态", "手动" in pg.inner_text("#cmode") and not pg.is_disabled("#cauto"))
+    pg.evaluate("sim.setParams({walls:3})"); k3 = pg.evaluate("sim.castle()")
+    check("改参数后手动位置保留", k3["manual"] and abs(k3["x"]-k2["x"]) < 0.01 and abs(k3["z"]-k2["z"]) < 0.01)
+    pg.evaluate("sim.setParams({walls:2})")
+    shot(pg, "shot_2d_manual.png")
+    pg.click("#cauto"); pg.wait_for_timeout(200); k4 = pg.evaluate("sim.castle()")
+    check("恢复自动选址", not k4["manual"] and abs(k4["x"]-k["x"]) < 0.01 and abs(k4["z"]-k["z"]) < 0.01)
+
+    # ===== 3D =====
     pg.click("#m3d"); pg.wait_for_timeout(800)
-    st = pg.evaluate("sim.state()")
-    check("切换到 3D 模式", st["mode"] == "3d")
+    check("切换到 3D 模式", pg.evaluate("sim.state().mode") == "3d")
     vis = pg.evaluate("[getComputedStyle(c2d).display,getComputedStyle(c3d).display]")
     check("3D 画布显示、2D 隐藏", vis == ["none","block"], str(vis))
-    pg.screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "shot_3d.png"))
-    # 3D 画面不只是天空色
+    shot(pg, "shot_3d.png")
     px3 = pg.evaluate("""()=>{const c=document.getElementById('c3d');const g=c.getContext('webgl');const d=new Uint8Array(4);g.readPixels(c.width/2,c.height/2,1,1,g.RGBA,g.UNSIGNED_BYTE,d);return Array.from(d)}""")
     check("3D 画面中心有地形", abs(px3[0]-168)+abs(px3[1]-189)+abs(px3[2]-214) > 30, str(px3))
-    # 鼠标旋转
     pg.mouse.move(640,400); pg.mouse.down(); pg.mouse.move(760,430, steps=5); pg.mouse.up(); pg.wait_for_timeout(300)
-    pg.screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "shot_3d_rot.png"))
-    # 切回 2D
+    shot(pg, "shot_3d_rot.png")
     pg.click("#m2d"); pg.wait_for_timeout(300)
     check("切回 2D 模式", pg.evaluate("sim.state().mode") == "2d")
     st = pg.evaluate("sim.state()")
-    check("全程无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), "; ".join(logs[:3]))
+    check("全程无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), "; ".join(l for l in logs if "pageerror" in l)[:200])
     b.close()
 fails = [r for r in results if not r[1]]
 print(f"\n共 {len(results)} 项，失败 {len(fails)} 项")

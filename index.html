@@ -2,9 +2,10 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>3D仿真：城堡+城镇 · 预览</title>
 <style>
-html,body{margin:0;height:100%;background:#1b1d22;color:#e8e8e8;font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif;overflow:hidden}
+html,body{margin:0;height:100%;background:#1b1d22;color:#e8e8e8;font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;overflow:hidden}
 #bar{position:absolute;top:0;left:0;right:0;height:48px;display:flex;align-items:center;gap:10px;padding:0 14px;background:#25282f;border-bottom:1px solid #353944;z-index:2;font-size:14px}
 #bar .title{font-weight:600;margin-right:12px}
 #bar input{width:110px;background:#1b1d22;border:1px solid #444a57;color:#fff;padding:5px 8px;border-radius:4px}
@@ -17,6 +18,17 @@ html,body{margin:0;height:100%;background:#1b1d22;color:#e8e8e8;font-family:"Pin
 canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
 #hud{position:absolute;left:12px;bottom:12px;background:rgba(20,22,26,.82);padding:8px 12px;border-radius:4px;font-size:12px;line-height:1.7;color:#c9ced8;pointer-events:none}
 #probe{position:absolute;right:12px;bottom:12px;background:rgba(20,22,26,.82);padding:8px 12px;border-radius:4px;font-size:12px;line-height:1.7;color:#c9ced8;pointer-events:none;min-width:160px}
+#panel{position:absolute;top:12px;left:12px;width:190px;background:rgba(20,22,26,.9);border:1px solid #353944;border-radius:6px;padding:10px 12px;font-size:13px;z-index:1}
+#panel .ph{font-weight:600;margin-bottom:6px;color:#e8c070}
+#panel label{display:block;margin:9px 0}
+#panel input[type=range]{width:100%;margin-top:4px}
+#panel select{background:#1b1d22;color:#fff;border:1px solid #444a57;border-radius:4px;padding:2px 6px;margin-left:6px}
+#panel .row{display:flex;align-items:center;gap:6px}
+#panel .sep{border-top:1px solid #353944;margin:10px 0}
+#panel button{width:100%;margin-top:6px;background:#363b47;border:1px solid #4a5060;color:#e8e8e8;padding:5px;border-radius:4px;cursor:pointer;font-size:12px}
+#panel button:disabled{opacity:.45;cursor:default}
+#panel .tip{font-size:11px;color:#8a909c;margin-top:6px;line-height:1.5}
+#cmode.manual{color:#ffb347}
 </style>
 </head>
 <body>
@@ -31,15 +43,32 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
 <div id="view">
   <canvas id="c2d"></canvas>
   <canvas id="c3d"></canvas>
+  <div id="panel">
+    <div class="ph">参数</div>
+    <label>地形起伏 <span id="vRelief">1.0</span><input id="relief" type="range" min="0.5" max="1.5" step="0.1" value="1"></label>
+    <label class="row"><input id="river" type="checkbox" checked> 有河流</label>
+    <label>城镇规模<select id="town"><option value="s">小</option><option value="m" selected>中</option><option value="l">大</option></select></label>
+    <label>城墙层数<select id="walls"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select></label>
+    <div class="sep"></div>
+    <div>城堡位置：<span id="cmode">自动</span></div>
+    <button id="cauto">恢复自动选址</button>
+    <div class="tip">在 2D 俯视里可以直接拖动城堡。手动位置在改参数、换种子后都会保留。</div>
+    <button id="copy">复制当前设置链接</button>
+  </div>
   <div id="hud"></div>
   <div id="probe"></div>
 </div>
 <script>
 'use strict';
 // ===== 配置 =====
-const CFG = { N: 129, SIZE: 256, HMAX: 32 };   // 网格顶点数 / 地块边长(米) / 最大高度(米)
-const S = { seed: 0, mode: '2d', heights: null, minH: 0, maxH: 0, errors: [], view2d: null, webgl: false };
+const CFG = { N: 129, SIZE: 256, HMAX: 32, RIVER_BED: 4, RIVER_BANK: 18 }; // 网格顶点数 / 地块边长(米) / 最大高度(米) / 河床半宽 / 河岸过渡宽度
+const TOWN = { s: { name: '小', r: 25 }, m: { name: '中', r: 40 }, l: { name: '大', r: 60 } };
+const P = { seed: 20261005, relief: 1, river: true, town: 'm', walls: 2 };  // 生成参数
+const O = { castle: null };                                                 // 人工覆盖：重新生成时保留，不被自动结果冲掉
+const S = { mode: '2d', heights: null, minH: 0, maxH: 0, errors: [], view2d: null, webgl: false, river: null, autoCastle: null };
 window.addEventListener('error', e => S.errors.push(String(e.message)));
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
 // ===== 种子随机与噪声（同一种子必定得到同一结果）=====
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
@@ -49,22 +78,32 @@ function vnoise(x,y,s){const ix=Math.floor(x),iy=Math.floor(y),fx=x-ix,fy=y-iy;c
   return a+(b-a)*ux+(c-a)*uy+(a-b-c+d)*ux*uy;}
 function fbm(x,y,s){let v=0,amp=0.5,f=1,norm=0;for(let o=0;o<5;o++){v+=amp*vnoise(x*f,y*f,s+o*1013);norm+=amp;amp*=0.5;f*=2;}return v/norm;}
 
-// ===== 地形（0.1 阶段为占位地形，正式地形在任务 1.1 中替换）=====
+// ===== 河流（由种子决定走向，南北贯穿）=====
+function riverX(z){const r=S.river;return r.x0+r.amp*Math.sin(z/CFG.SIZE*r.freq*Math.PI*2+r.phase);}
+function riverDist(x,z){ // 到河道中心线的真实距离(米)，40 米以外只做近似
+  if(!P.river||!S.river) return Infinity;
+  let best=Infinity; for(let dz=-40;dz<=40;dz+=2){const zz=z+dz;const d=Math.hypot(x-riverX(zz),dz);if(d<best)best=d;} return best;}
+function isWater(x,z){return riverDist(x,z)<CFG.RIVER_BED;}
+
+// ===== 地形（占位地形，正式地形在任务 1.1 中替换）=====
 function generate(seed){
-  seed = Math.floor(Number(seed)) || 0; S.seed = seed;
-  const N=CFG.N, h=new Float32Array(N*N), rng=mulberry32(seed);
-  const ox=rng()*1000, oy=rng()*1000;
+  if(seed!==undefined) P.seed=Math.floor(Number(seed))||0;
+  const N=CFG.N, c=CFG.SIZE/(N-1), h=new Float32Array(N*N), rng=mulberry32(P.seed);
+  const ox=rng()*1000, oy=rng()*1000, r2=mulberry32(P.seed^0x5bd1e995);
+  S.river={x0:CFG.SIZE*(0.3+0.4*r2()),amp:14+18*r2(),freq:0.8+0.9*r2(),phase:r2()*Math.PI*2};
   let mn=1e9,mx=-1e9;
   for(let j=0;j<N;j++) for(let i=0;i<N;i++){
     const u=i/(N-1), v=j/(N-1);
-    let e = fbm(ox+u*4, oy+v*4, seed);
+    let e = fbm(ox+u*4, oy+v*4, P.seed);
     e = Math.pow(Math.max(0,(e-0.15)/0.75), 1.6);
-    const H = Math.min(1,e)*CFG.HMAX;
+    let H = Math.min(CFG.HMAX, Math.min(1,e)*CFG.HMAX*P.relief);
+    const d=riverDist(i*c,j*c);
+    if(d<CFG.RIVER_BED) H=0; else if(d<CFG.RIVER_BED+CFG.RIVER_BANK){const t=(d-CFG.RIVER_BED)/CFG.RIVER_BANK;H*=t*t*(3-2*t);}
     h[j*N+i]=H; if(H<mn)mn=H; if(H>mx)mx=H;
   }
   S.heights=h; S.minH=mn; S.maxH=mx;
-  document.getElementById('seed').value = seed;
-  build3D(); refresh(); writeHash();
+  S.autoCastle=pickCastleSite();
+  syncPanel(); build3D(); refresh(); writeHash();
 }
 function heightAt(x,z){ // 世界坐标(米) -> 高度(米)，双线性插值
   const N=CFG.N, c=CFG.SIZE/(N-1);
@@ -76,19 +115,38 @@ function heightAt(x,z){ // 世界坐标(米) -> 高度(米)，双线性插值
 function normalAt(x,z){const e=1.0;const dx=heightAt(x+e,z)-heightAt(x-e,z), dz=heightAt(x,z+e)-heightAt(x,z-e);
   const n=[-dx,2*e,-dz], l=Math.hypot(n[0],n[1],n[2]); return [n[0]/l,n[1]/l,n[2]/l];}
 const RAMP=[[0,[86,122,66]],[0.3,[118,148,80]],[0.55,[158,150,98]],[0.78,[138,128,116]],[1,[205,202,196]]];
+const WATER=[70,115,165];
 function colorAt(h){const t=Math.min(1,Math.max(0,h/CFG.HMAX));
   for(let k=1;k<RAMP.length;k++){if(t<=RAMP[k][0]){const [t0,c0]=RAMP[k-1],[t1,c1]=RAMP[k],f=(t-t0)/(t1-t0);
     return [c0[0]+(c1[0]-c0[0])*f,c0[1]+(c1[1]-c0[1])*f,c0[2]+(c1[2]-c0[2])*f];}}
   return RAMP[RAMP.length-1][1];}
 
+// ===== 城堡选址（自动结果，可被人工覆盖）=====
+function castleR(){return 10+6*P.walls;}            // 城堡外墙半径：1层16米 / 2层22米 / 3层28米
+function townR(){return castleR()+TOWN[P.town].r;}   // 城镇外缘半径
+function slopeAround(x,z,r){let a=heightAt(x,z),b=a;for(let k=0;k<8;k++){const t=k/8*Math.PI*2;const hh=heightAt(x+Math.cos(t)*r,z+Math.sin(t)*r);a=Math.min(a,hh);b=Math.max(b,hh);}return b-a;}
+function pickCastleSite(){ // 偏好：地势高、场地平、离中心近、靠近但不压河道
+  const rc=castleR(), m=rc+8; let best=null,bs=-1e9;
+  for(let z=m;z<=CFG.SIZE-m;z+=8) for(let x=m;x<=CFG.SIZE-m;x+=8){
+    const rd=riverDist(x,z); if(rd<rc+6) continue;
+    const hg=heightAt(x,z)/CFG.HMAX, sl=slopeAround(x,z,rc*0.6)/CFG.HMAX, dc=Math.hypot(x-CFG.SIZE/2,z-CFG.SIZE/2)/CFG.SIZE;
+    let s=0.6*hg-1.2*sl-0.5*dc; if(rd<rc+40) s+=0.1;
+    if(s>bs){bs=s;best={x,z};}
+  }
+  return best||{x:CFG.SIZE/2,z:CFG.SIZE/2};
+}
+function castle(){const p=O.castle||S.autoCastle, r=castleR();
+  return {x:p.x,z:p.z,r,townR:townR(),walls:P.walls,manual:!!O.castle,inWater:riverDist(p.x,p.z)<r};}
+function clampCastle(){if(!O.castle)return;const rc=castleR();O.castle.x=clamp(O.castle.x,rc,CFG.SIZE-rc);O.castle.z=clamp(O.castle.z,rc,CFG.SIZE-rc);}
+
 // ===== 画布工具 =====
-const C2=document.getElementById('c2d'), C3=document.getElementById('c3d');
+const C2=$('c2d'), C3=$('c3d');
 function fitCanvas(cv){const dpr=window.devicePixelRatio||1, w=Math.max(1,Math.round(cv.clientWidth*dpr)), h=Math.max(1,Math.round(cv.clientHeight*dpr));
   if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;} return dpr;}
 
 // ===== 2D 俯视 =====
 let mapCache=null;
-function buildMap(){ // 512x512 地图：高度着色 + 山体阴影 + 等高线(2米一条，10米加粗)
+function buildMap(){ // 512x512 地图：高度着色 + 山体阴影 + 等高线(2米一条，10米加粗) + 河道
   const R=512, cv=document.createElement('canvas'); cv.width=cv.height=R;
   const ctx=cv.getContext('2d'), img=ctx.createImageData(R,R), band=new Int16Array(R*R), hs=new Float32Array(R*R);
   const L=[-0.55,0.62,-0.55], ll=Math.hypot(...L); L[0]/=ll;L[1]/=ll;L[2]/=ll;
@@ -96,12 +154,30 @@ function buildMap(){ // 512x512 地图：高度着色 + 山体阴影 + 等高线
   for(let y=0;y<R;y++)for(let x=0;x<R;x++){
     const k=y*R+x, h=hs[k], wx=(x+0.5)/R*CFG.SIZE, wz=(y+0.5)/R*CFG.SIZE;
     const n=normalAt(wx,wz), sh=0.55+0.6*Math.max(0,n[0]*L[0]+n[1]*L[1]+n[2]*L[2]);
-    let c=colorAt(h), f=sh;
-    const b=band[k], br=x<R-1?band[k+1]:b, bd=y<R-1?band[k+R]:b;
-    if(b!==br||b!==bd){ f*= (Math.max(b,br,bd)%5===0)?0.62:0.8; }
+    let c, f;
+    if(P.river && isWater(wx,wz)){ c=WATER; f=1.0; }
+    else { c=colorAt(h); f=sh;
+      const b=band[k], br=x<R-1?band[k+1]:b, bd=y<R-1?band[k+R]:b;
+      if(b!==br||b!==bd){ f*= (Math.max(b,br,bd)%5===0)?0.62:0.8; } }
     img.data[k*4]=Math.min(255,c[0]*f); img.data[k*4+1]=Math.min(255,c[1]*f); img.data[k*4+2]=Math.min(255,c[2]*f); img.data[k*4+3]=255;
   }
   ctx.putImageData(img,0,0); mapCache=cv;
+}
+function drawCastleOverlay(ctx){
+  const v=S.view2d, k=castle(), d=v.dpr, sx=v.ox+k.x*v.sc, sy=v.oy+k.z*v.sc, side=CFG.SIZE*v.sc;
+  const col=k.inWater?'#ff5a5a':(k.manual?'#ffb347':'#f0d080');
+  ctx.save(); ctx.beginPath(); ctx.rect(v.ox,v.oy,side,side); ctx.clip();
+  ctx.fillStyle='rgba(235,205,130,0.13)'; ctx.beginPath(); ctx.arc(sx,sy,k.townR*v.sc,0,Math.PI*2); ctx.fill();
+  ctx.setLineDash([6*d,5*d]); ctx.strokeStyle='rgba(235,205,130,0.75)'; ctx.lineWidth=1.5*d; ctx.stroke();
+  for(let w=0;w<k.walls;w++){ctx.beginPath(); ctx.arc(sx,sy,(k.r-w*6)*v.sc,0,Math.PI*2);
+    ctx.setLineDash(w===0?[]:[4*d,3*d]); ctx.strokeStyle=col; ctx.lineWidth=(w===0?2.5:1.5)*d; ctx.stroke();}
+  ctx.setLineDash([]); ctx.fillStyle=col; ctx.beginPath(); ctx.arc(sx,sy,3.5*d,0,Math.PI*2); ctx.fill();
+  ctx.font=(12*d)+'px sans-serif'; ctx.textAlign='center';
+  const label='城堡（'+(k.manual?'手动':'自动')+(k.inWater?'·压到河道':'')+'）', ly=sy-k.r*v.sc-8*d, tw=ctx.measureText(label).width;
+  ctx.fillStyle='rgba(20,22,26,0.78)'; ctx.fillRect(sx-tw/2-5*d,ly-13*d,tw+10*d,18*d);
+  ctx.fillStyle=k.inWater?'#ff8080':'#fff'; ctx.fillText(label,sx,ly);
+  ctx.fillStyle='rgba(235,205,130,0.95)'; ctx.fillText('城镇范围',sx,sy+k.townR*v.sc-6*d);
+  ctx.restore();
 }
 function draw2D(){
   const dpr=fitCanvas(C2), ctx=C2.getContext('2d'), W=C2.width, H=C2.height;
@@ -110,7 +186,6 @@ function draw2D(){
   const m=40*dpr, side=Math.min(W,H)-2*m, ox=(W-side)/2, oy=(H-side)/2, sc=side/CFG.SIZE;
   S.view2d={ox,oy,sc,dpr};
   ctx.imageSmoothingEnabled=true; ctx.drawImage(mapCache,ox,oy,side,side);
-  // 网格：每 32 米一条
   ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=1*dpr; ctx.fillStyle='#9aa1b0'; ctx.font=(11*dpr)+'px sans-serif';
   for(let g=0; g<=CFG.SIZE; g+=32){const p=g*sc;
     ctx.beginPath(); ctx.moveTo(ox+p,oy); ctx.lineTo(ox+p,oy+side); ctx.stroke();
@@ -118,23 +193,26 @@ function draw2D(){
     ctx.textAlign='center'; ctx.fillText(g+'',ox+p,oy-8*dpr);
     ctx.textAlign='right'; ctx.fillText(g+'',ox-6*dpr,oy+p+4*dpr);}
   ctx.strokeStyle='#555b68'; ctx.lineWidth=1.5*dpr; ctx.strokeRect(ox,oy,side,side);
-  // 比例尺 50 米
+  drawCastleOverlay(ctx);
   const bx=ox+side-50*sc-10*dpr, by=oy+side-14*dpr;
   ctx.fillStyle='rgba(20,22,26,0.75)'; ctx.fillRect(bx-8*dpr,by-18*dpr,50*sc+16*dpr,26*dpr);
   ctx.strokeStyle='#fff'; ctx.lineWidth=2*dpr; ctx.beginPath(); ctx.moveTo(bx,by); ctx.lineTo(bx+50*sc,by); ctx.moveTo(bx,by-4*dpr); ctx.lineTo(bx,by+3*dpr); ctx.moveTo(bx+50*sc,by-4*dpr); ctx.lineTo(bx+50*sc,by+3*dpr); ctx.stroke();
-  ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.fillText('50 米',bx+25*sc,by-6*dpr);
-  // 指北
+  ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.font=(11*dpr)+'px sans-serif'; ctx.fillText('50 米',bx+25*sc,by-6*dpr);
   const nx=ox+side-18*dpr, ny=oy+22*dpr;
   ctx.fillStyle='rgba(20,22,26,0.75)'; ctx.beginPath(); ctx.arc(nx,ny,14*dpr,0,7); ctx.fill();
   ctx.fillStyle='#e8c070'; ctx.beginPath(); ctx.moveTo(nx,ny-10*dpr); ctx.lineTo(nx-5*dpr,ny+4*dpr); ctx.lineTo(nx+5*dpr,ny+4*dpr); ctx.fill();
   ctx.fillStyle='#fff'; ctx.fillText('北',nx,ny+12*dpr);
 }
+function screenToWorld(ev){const v=S.view2d,r=C2.getBoundingClientRect();return {x:((ev.clientX-r.left)*v.dpr-v.ox)/v.sc,z:((ev.clientY-r.top)*v.dpr-v.oy)/v.sc};}
+let cdrag=false;
+C2.addEventListener('mousedown',ev=>{if(!S.view2d)return;const p=screenToWorld(ev),k=castle();if(Math.hypot(p.x-k.x,p.z-k.z)<=k.r){cdrag=true;ev.preventDefault();}});
+window.addEventListener('mouseup',()=>{if(cdrag){cdrag=false;C2.style.cursor='grab';syncPanel();refresh();writeHash();}});
 C2.addEventListener('mousemove',ev=>{
-  const v=S.view2d; if(!v) return; const r=C2.getBoundingClientRect();
-  const px=(ev.clientX-r.left)*v.dpr, py=(ev.clientY-r.top)*v.dpr;
-  const x=(px-v.ox)/v.sc, z=(py-v.oy)/v.sc, P=document.getElementById('probe');
-  if(x<0||z<0||x>CFG.SIZE||z>CFG.SIZE){P.innerHTML='移动鼠标到地形上查看坐标';return;}
-  P.innerHTML='X '+x.toFixed(1)+' 米　Z '+z.toFixed(1)+' 米<br>高度 '+heightAt(x,z).toFixed(2)+' 米';
+  const v=S.view2d; if(!v) return; const p=screenToWorld(ev), P2=$('probe');
+  if(cdrag){O.castle={x:p.x,z:p.z};clampCastle();draw2D();syncPanel();C2.style.cursor='grabbing';}
+  else{const k=castle();C2.style.cursor=Math.hypot(p.x-k.x,p.z-k.z)<=k.r?'grab':'default';}
+  if(p.x<0||p.z<0||p.x>CFG.SIZE||p.z>CFG.SIZE){P2.innerHTML='移动鼠标到地形上查看坐标';return;}
+  P2.innerHTML='X '+p.x.toFixed(1)+' 米　Z '+p.z.toFixed(1)+' 米<br>高度 '+heightAt(p.x,p.z).toFixed(2)+' 米'+(isWater(p.x,p.z)?'（河道）':'');
 });
 
 // ===== 3D 视角（原生 WebGL，无外部库）=====
@@ -162,7 +240,7 @@ function init3D(){
 function build3D(){
   mapCache=null; if(!gl) return;
   const N=CFG.N, c=CFG.SIZE/(N-1), data=new Float32Array(N*N*9);
-  for(let j=0;j<N;j++)for(let i=0;i<N;i++){const x=i*c,z=j*c,h=S.heights[j*N+i],n=normalAt(x,z),col=colorAt(h),o=(j*N+i)*9;
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){const x=i*c,z=j*c,h=S.heights[j*N+i],n=normalAt(x,z),col=isWater(x,z)?WATER:colorAt(h),o=(j*N+i)*9;
     data.set([x,h,z,n[0],n[1],n[2],col[0]/255,col[1]/255,col[2]/255],o);}
   gl.bindBuffer(gl.ARRAY_BUFFER,vbo); gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
 }
@@ -195,30 +273,59 @@ C3.addEventListener('wheel',e=>{e.preventDefault();cam.dist=Math.min(900,Math.ma
 // ===== 界面 =====
 function setMode(m){S.mode=(m==='3d')?'3d':'2d';
   C2.style.display=S.mode==='2d'?'block':'none'; C3.style.display=S.mode==='3d'?'block':'none';
-  document.getElementById('m2d').classList.toggle('on',S.mode==='2d'); document.getElementById('m3d').classList.toggle('on',S.mode==='3d');
+  $('m2d').classList.toggle('on',S.mode==='2d'); $('m3d').classList.toggle('on',S.mode==='3d');
   refresh(); writeHash();}
+function setParams(o){Object.assign(P,o); clampCastle(); generate();}
+function resetCastle(){O.castle=null; syncPanel(); refresh(); writeHash();}
+function syncPanel(){
+  $('seed').value=P.seed; $('relief').value=P.relief; $('vRelief').textContent=Number(P.relief).toFixed(1);
+  $('river').checked=P.river; $('town').value=P.town; $('walls').value=String(P.walls);
+  const m=$('cmode'); m.textContent=O.castle?'手动（已覆盖自动结果）':'自动'; m.className=O.castle?'manual':''; $('cauto').disabled=!O.castle;}
+let flashT=0; function flash(t){S.flash=t;clearTimeout(flashT);refresh();flashT=setTimeout(()=>{S.flash='';refresh();},1800);}
 function refresh(){ if(!S.heights) return;
   if(S.mode==='2d') draw2D(); else render3D();
-  document.getElementById('hud').innerHTML='种子 '+S.seed+'<br>地块 '+CFG.SIZE+' × '+CFG.SIZE+' 米　网格 '+CFG.N+' × '+CFG.N+'<br>高度 '+S.minH.toFixed(1)+' ~ '+S.maxH.toFixed(1)+' 米'+'<br><span style="color:#8a909c">当前为占位地形（任务 1.1 替换为正式地形）</span>';
-  document.getElementById('probe').innerHTML=S.mode==='2d'?'移动鼠标到地形上查看坐标':'左键拖动：旋转<br>右键 / Shift+拖动：平移<br>滚轮：缩放';
-  document.getElementById('status').textContent=S.errors.length?('⚠ '+S.errors[0]):'就绪';
+  const k=castle();
+  $('hud').innerHTML='种子 '+P.seed+'　地形起伏 '+Number(P.relief).toFixed(1)+'<br>地块 '+CFG.SIZE+' × '+CFG.SIZE+' 米　高度 '+S.minH.toFixed(1)+' ~ '+S.maxH.toFixed(1)+' 米'
+    +'<br>河流 '+(P.river?'有':'无')+'　城镇 '+TOWN[P.town].name+'<br>城墙 '+P.walls+' 层（外墙半径 '+k.r+' 米）'
+    +'<br>城堡 ('+k.x.toFixed(0)+', '+k.z.toFixed(0)+') '+(k.manual?'手动':'自动')
+    +'<br><span style="color:#8a909c">当前为占位地形<br>城堡和城镇目前只在 2D 里画范围示意</span>';
+  if(S.mode==='3d') $('probe').innerHTML='左键拖动：旋转<br>右键 / Shift+拖动：平移<br>滚轮：缩放'; else if(!/^X /.test($('probe').innerHTML)) $('probe').innerHTML='移动鼠标到地形上查看坐标';
+  $('status').textContent=S.flash||(S.errors.length?('⚠ '+S.errors[0]):(k.inWater?'⚠ 城堡压到了河道':'就绪'));
 }
-function writeHash(){history.replaceState(null,'','#seed='+S.seed+'&mode='+S.mode);}
-document.getElementById('gen').onclick=()=>generate(document.getElementById('seed').value);
-document.getElementById('rnd').onclick=()=>generate(Math.floor(Math.random()*1e8));
-document.getElementById('seed').addEventListener('keydown',e=>{if(e.key==='Enter')generate(e.target.value);});
-document.getElementById('m2d').onclick=()=>setMode('2d'); document.getElementById('m3d').onclick=()=>setMode('3d');
+function writeHash(){const q=new URLSearchParams();q.set('seed',P.seed);q.set('relief',P.relief);q.set('river',P.river?1:0);q.set('town',P.town);q.set('walls',P.walls);
+  if(O.castle){q.set('cx',O.castle.x.toFixed(1));q.set('cz',O.castle.z.toFixed(1));} q.set('mode',S.mode);
+  history.replaceState(null,'','#'+q.toString());}
+function readHash(){const q=new URLSearchParams(location.hash.slice(1));
+  if(q.has('seed')) P.seed=Math.floor(Number(q.get('seed')))||0;
+  if(q.has('relief')) P.relief=clamp(Number(q.get('relief'))||1,0.5,1.5);
+  if(q.has('river')) P.river=q.get('river')!=='0';
+  if(TOWN[q.get('town')]) P.town=q.get('town');
+  const w=Number(q.get('walls')); if(w>=1&&w<=3) P.walls=w;
+  if(q.has('cx')&&q.has('cz')) O.castle={x:Number(q.get('cx')),z:Number(q.get('cz'))};
+  S.mode=q.get('mode')==='3d'?'3d':'2d';}
+$('gen').onclick=()=>generate($('seed').value);
+$('rnd').onclick=()=>generate(Math.floor(Math.random()*1e8));
+$('seed').addEventListener('keydown',e=>{if(e.key==='Enter')generate(e.target.value);});
+$('m2d').onclick=()=>setMode('2d'); $('m3d').onclick=()=>setMode('3d');
+$('relief').addEventListener('input',e=>{$('vRelief').textContent=Number(e.target.value).toFixed(1);});
+$('relief').addEventListener('change',e=>setParams({relief:Number(e.target.value)}));
+$('river').onchange=e=>setParams({river:e.target.checked});
+$('town').onchange=e=>setParams({town:e.target.value});
+$('walls').onchange=e=>setParams({walls:Number(e.target.value)});
+$('cauto').onclick=resetCastle;
+$('copy').onclick=()=>{if(navigator.clipboard)navigator.clipboard.writeText(location.href).then(()=>flash('链接已复制'),()=>flash('复制失败，请直接复制地址栏'));else flash('请直接复制地址栏');};
 window.addEventListener('resize',refresh);
 
 // 供验证环境调用的接口
-window.sim={generate,setMode,heightAt,state:()=>({seed:S.seed,mode:S.mode,N:CFG.N,size:CFG.SIZE,minH:S.minH,maxH:S.maxH,webgl:S.webgl,errors:S.errors.slice()})};
+window.sim={generate,setMode,heightAt,setParams,castle,riverDist,isWater,resetCastle,
+  params:()=>({...P}),
+  setCastle:(x,z)=>{O.castle={x,z};clampCastle();syncPanel();refresh();writeHash();},
+  toScreen:(x,z)=>{const v=S.view2d,r=C2.getBoundingClientRect();return {x:r.left+(v.ox+x*v.sc)/v.dpr,y:r.top+(v.oy+z*v.sc)/v.dpr};},
+  waterCount:()=>{const N=CFG.N,c=CFG.SIZE/(N-1);let n=0;for(let j=0;j<N;j++)for(let i=0;i<N;i++)if(isWater(i*c,j*c))n++;return n;},
+  state:()=>({seed:P.seed,mode:S.mode,N:CFG.N,size:CFG.SIZE,minH:S.minH,maxH:S.maxH,webgl:S.webgl,errors:S.errors.slice()})};
 
-// 启动：支持网址参数 #seed=xxx&mode=3d
-init3D();
-const hp=new URLSearchParams(location.hash.slice(1));
-S.mode=hp.get('mode')==='3d'?'3d':'2d';
-generate(hp.get('seed')||20261005);
-setMode(S.mode);
+// 启动：网址参数可复现全部设置，例如 #seed=123&relief=1.2&river=1&town=m&walls=2&mode=3d
+init3D(); readHash(); generate(); setMode(S.mode);
 </script>
 </body>
 </html>
