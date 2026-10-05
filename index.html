@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>3D仿真：城堡+城镇 · 预览</title>
+<style>
+html,body{margin:0;height:100%;background:#1b1d22;color:#e8e8e8;font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif;overflow:hidden}
+#bar{position:absolute;top:0;left:0;right:0;height:48px;display:flex;align-items:center;gap:10px;padding:0 14px;background:#25282f;border-bottom:1px solid #353944;z-index:2;font-size:14px}
+#bar .title{font-weight:600;margin-right:12px}
+#bar input{width:110px;background:#1b1d22;border:1px solid #444a57;color:#fff;padding:5px 8px;border-radius:4px}
+#bar button{background:#363b47;border:1px solid #4a5060;color:#e8e8e8;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:13px}
+#bar button:hover{background:#414757}
+#bar button.on{background:#c98a3b;border-color:#c98a3b;color:#111}
+.seg{display:flex}.seg button{border-radius:0!important}.seg button:first-child{border-radius:4px 0 0 4px!important}.seg button:last-child{border-radius:0 4px 4px 0!important}
+#status{margin-left:auto;font-size:12px;color:#9aa1b0}
+#view{position:absolute;top:49px;left:0;right:0;bottom:0}
+canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
+#hud{position:absolute;left:12px;bottom:12px;background:rgba(20,22,26,.82);padding:8px 12px;border-radius:4px;font-size:12px;line-height:1.7;color:#c9ced8;pointer-events:none}
+#probe{position:absolute;right:12px;bottom:12px;background:rgba(20,22,26,.82);padding:8px 12px;border-radius:4px;font-size:12px;line-height:1.7;color:#c9ced8;pointer-events:none;min-width:160px}
+</style>
+</head>
+<body>
+<div id="bar">
+  <span class="title">城堡+城镇 · 预览</span>
+  <label>种子 <input id="seed" type="number" value="20261005"></label>
+  <button id="gen">生成</button>
+  <button id="rnd">随机种子</button>
+  <div class="seg"><button id="m2d">2D 俯视</button><button id="m3d">3D 视角</button></div>
+  <span id="status"></span>
+</div>
+<div id="view">
+  <canvas id="c2d"></canvas>
+  <canvas id="c3d"></canvas>
+  <div id="hud"></div>
+  <div id="probe"></div>
+</div>
+<script>
+'use strict';
+// ===== 配置 =====
+const CFG = { N: 129, SIZE: 256, HMAX: 32 };   // 网格顶点数 / 地块边长(米) / 最大高度(米)
+const S = { seed: 0, mode: '2d', heights: null, minH: 0, maxH: 0, errors: [], view2d: null, webgl: false };
+window.addEventListener('error', e => S.errors.push(String(e.message)));
+
+// ===== 种子随机与噪声（同一种子必定得到同一结果）=====
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function hash2(ix,iy,s){let h=Math.imul(ix,374761393)^Math.imul(iy,668265263)^Math.imul(s|0,-2048144789);h=Math.imul(h^(h>>>13),1274126177);h^=h>>>16;return (h>>>0)/4294967296;}
+function vnoise(x,y,s){const ix=Math.floor(x),iy=Math.floor(y),fx=x-ix,fy=y-iy;const ux=fx*fx*(3-2*fx),uy=fy*fy*(3-2*fy);
+  const a=hash2(ix,iy,s),b=hash2(ix+1,iy,s),c=hash2(ix,iy+1,s),d=hash2(ix+1,iy+1,s);
+  return a+(b-a)*ux+(c-a)*uy+(a-b-c+d)*ux*uy;}
+function fbm(x,y,s){let v=0,amp=0.5,f=1,norm=0;for(let o=0;o<5;o++){v+=amp*vnoise(x*f,y*f,s+o*1013);norm+=amp;amp*=0.5;f*=2;}return v/norm;}
+
+// ===== 地形（0.1 阶段为占位地形，正式地形在任务 1.1 中替换）=====
+function generate(seed){
+  seed = Math.floor(Number(seed)) || 0; S.seed = seed;
+  const N=CFG.N, h=new Float32Array(N*N), rng=mulberry32(seed);
+  const ox=rng()*1000, oy=rng()*1000;
+  let mn=1e9,mx=-1e9;
+  for(let j=0;j<N;j++) for(let i=0;i<N;i++){
+    const u=i/(N-1), v=j/(N-1);
+    let e = fbm(ox+u*4, oy+v*4, seed);
+    e = Math.pow(Math.max(0,(e-0.15)/0.75), 1.6);
+    const H = Math.min(1,e)*CFG.HMAX;
+    h[j*N+i]=H; if(H<mn)mn=H; if(H>mx)mx=H;
+  }
+  S.heights=h; S.minH=mn; S.maxH=mx;
+  document.getElementById('seed').value = seed;
+  build3D(); refresh(); writeHash();
+}
+function heightAt(x,z){ // 世界坐标(米) -> 高度(米)，双线性插值
+  const N=CFG.N, c=CFG.SIZE/(N-1);
+  const fx=Math.min(N-1.0001,Math.max(0,x/c)), fz=Math.min(N-1.0001,Math.max(0,z/c));
+  const i=Math.floor(fx), j=Math.floor(fz), tx=fx-i, tz=fz-j, h=S.heights;
+  const a=h[j*N+i], b=h[j*N+i+1], d=h[(j+1)*N+i], e=h[(j+1)*N+i+1];
+  return a*(1-tx)*(1-tz)+b*tx*(1-tz)+d*(1-tx)*tz+e*tx*tz;
+}
+function normalAt(x,z){const e=1.0;const dx=heightAt(x+e,z)-heightAt(x-e,z), dz=heightAt(x,z+e)-heightAt(x,z-e);
+  const n=[-dx,2*e,-dz], l=Math.hypot(n[0],n[1],n[2]); return [n[0]/l,n[1]/l,n[2]/l];}
+const RAMP=[[0,[86,122,66]],[0.3,[118,148,80]],[0.55,[158,150,98]],[0.78,[138,128,116]],[1,[205,202,196]]];
+function colorAt(h){const t=Math.min(1,Math.max(0,h/CFG.HMAX));
+  for(let k=1;k<RAMP.length;k++){if(t<=RAMP[k][0]){const [t0,c0]=RAMP[k-1],[t1,c1]=RAMP[k],f=(t-t0)/(t1-t0);
+    return [c0[0]+(c1[0]-c0[0])*f,c0[1]+(c1[1]-c0[1])*f,c0[2]+(c1[2]-c0[2])*f];}}
+  return RAMP[RAMP.length-1][1];}
+
+// ===== 画布工具 =====
+const C2=document.getElementById('c2d'), C3=document.getElementById('c3d');
+function fitCanvas(cv){const dpr=window.devicePixelRatio||1, w=Math.max(1,Math.round(cv.clientWidth*dpr)), h=Math.max(1,Math.round(cv.clientHeight*dpr));
+  if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;} return dpr;}
+
+// ===== 2D 俯视 =====
+let mapCache=null;
+function buildMap(){ // 512x512 地图：高度着色 + 山体阴影 + 等高线(2米一条，10米加粗)
+  const R=512, cv=document.createElement('canvas'); cv.width=cv.height=R;
+  const ctx=cv.getContext('2d'), img=ctx.createImageData(R,R), band=new Int16Array(R*R), hs=new Float32Array(R*R);
+  const L=[-0.55,0.62,-0.55], ll=Math.hypot(...L); L[0]/=ll;L[1]/=ll;L[2]/=ll;
+  for(let y=0;y<R;y++)for(let x=0;x<R;x++){const wx=(x+0.5)/R*CFG.SIZE, wz=(y+0.5)/R*CFG.SIZE; const h=heightAt(wx,wz); hs[y*R+x]=h; band[y*R+x]=Math.floor(h/2);}
+  for(let y=0;y<R;y++)for(let x=0;x<R;x++){
+    const k=y*R+x, h=hs[k], wx=(x+0.5)/R*CFG.SIZE, wz=(y+0.5)/R*CFG.SIZE;
+    const n=normalAt(wx,wz), sh=0.55+0.6*Math.max(0,n[0]*L[0]+n[1]*L[1]+n[2]*L[2]);
+    let c=colorAt(h), f=sh;
+    const b=band[k], br=x<R-1?band[k+1]:b, bd=y<R-1?band[k+R]:b;
+    if(b!==br||b!==bd){ f*= (Math.max(b,br,bd)%5===0)?0.62:0.8; }
+    img.data[k*4]=Math.min(255,c[0]*f); img.data[k*4+1]=Math.min(255,c[1]*f); img.data[k*4+2]=Math.min(255,c[2]*f); img.data[k*4+3]=255;
+  }
+  ctx.putImageData(img,0,0); mapCache=cv;
+}
+function draw2D(){
+  const dpr=fitCanvas(C2), ctx=C2.getContext('2d'), W=C2.width, H=C2.height;
+  ctx.fillStyle='#1b1d22'; ctx.fillRect(0,0,W,H);
+  if(!mapCache) buildMap();
+  const m=40*dpr, side=Math.min(W,H)-2*m, ox=(W-side)/2, oy=(H-side)/2, sc=side/CFG.SIZE;
+  S.view2d={ox,oy,sc,dpr};
+  ctx.imageSmoothingEnabled=true; ctx.drawImage(mapCache,ox,oy,side,side);
+  // 网格：每 32 米一条
+  ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=1*dpr; ctx.fillStyle='#9aa1b0'; ctx.font=(11*dpr)+'px sans-serif';
+  for(let g=0; g<=CFG.SIZE; g+=32){const p=g*sc;
+    ctx.beginPath(); ctx.moveTo(ox+p,oy); ctx.lineTo(ox+p,oy+side); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ox,oy+p); ctx.lineTo(ox+side,oy+p); ctx.stroke();
+    ctx.textAlign='center'; ctx.fillText(g+'',ox+p,oy-8*dpr);
+    ctx.textAlign='right'; ctx.fillText(g+'',ox-6*dpr,oy+p+4*dpr);}
+  ctx.strokeStyle='#555b68'; ctx.lineWidth=1.5*dpr; ctx.strokeRect(ox,oy,side,side);
+  // 比例尺 50 米
+  const bx=ox+side-50*sc-10*dpr, by=oy+side-14*dpr;
+  ctx.fillStyle='rgba(20,22,26,0.75)'; ctx.fillRect(bx-8*dpr,by-18*dpr,50*sc+16*dpr,26*dpr);
+  ctx.strokeStyle='#fff'; ctx.lineWidth=2*dpr; ctx.beginPath(); ctx.moveTo(bx,by); ctx.lineTo(bx+50*sc,by); ctx.moveTo(bx,by-4*dpr); ctx.lineTo(bx,by+3*dpr); ctx.moveTo(bx+50*sc,by-4*dpr); ctx.lineTo(bx+50*sc,by+3*dpr); ctx.stroke();
+  ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.fillText('50 米',bx+25*sc,by-6*dpr);
+  // 指北
+  const nx=ox+side-18*dpr, ny=oy+22*dpr;
+  ctx.fillStyle='rgba(20,22,26,0.75)'; ctx.beginPath(); ctx.arc(nx,ny,14*dpr,0,7); ctx.fill();
+  ctx.fillStyle='#e8c070'; ctx.beginPath(); ctx.moveTo(nx,ny-10*dpr); ctx.lineTo(nx-5*dpr,ny+4*dpr); ctx.lineTo(nx+5*dpr,ny+4*dpr); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.fillText('北',nx,ny+12*dpr);
+}
+C2.addEventListener('mousemove',ev=>{
+  const v=S.view2d; if(!v) return; const r=C2.getBoundingClientRect();
+  const px=(ev.clientX-r.left)*v.dpr, py=(ev.clientY-r.top)*v.dpr;
+  const x=(px-v.ox)/v.sc, z=(py-v.oy)/v.sc, P=document.getElementById('probe');
+  if(x<0||z<0||x>CFG.SIZE||z>CFG.SIZE){P.innerHTML='移动鼠标到地形上查看坐标';return;}
+  P.innerHTML='X '+x.toFixed(1)+' 米　Z '+z.toFixed(1)+' 米<br>高度 '+heightAt(x,z).toFixed(2)+' 米';
+});
+
+// ===== 3D 视角（原生 WebGL，无外部库）=====
+let gl=null, prog=null, loc={}, vbo=null, ibo=null, idxCount=0;
+const cam={yaw:-0.75, pitch:0.55, dist:340, target:[CFG.SIZE/2,6,CFG.SIZE/2]};
+function init3D(){
+  gl=C3.getContext('webgl',{antialias:true,preserveDrawingBuffer:true});
+  if(!gl){S.errors.push('浏览器不支持 WebGL，3D 视角不可用');return;}
+  const vs=`attribute vec3 aPos;attribute vec3 aNrm;attribute vec3 aCol;uniform mat4 uMVP;varying vec3 vN;varying vec3 vC;varying vec3 vP;
+    void main(){vN=aNrm;vC=aCol;vP=aPos;gl_Position=uMVP*vec4(aPos,1.0);}`;
+  const fs=`precision mediump float;varying vec3 vN;varying vec3 vC;varying vec3 vP;uniform vec3 uSun;uniform vec3 uEye;
+    void main(){vec3 n=normalize(vN);float d=max(dot(n,uSun),0.0);vec3 col=vC*(0.42+0.72*d);
+      vec2 g=abs(fract(vP.xz/32.0+0.5)-0.5)*32.0;float line=1.0-smoothstep(0.0,0.35,min(g.x,g.y));col=mix(col,col*0.72,line*0.6);
+      float dist=length(vP-uEye);float fog=clamp((dist-220.0)/600.0,0.0,0.55);col=mix(col,vec3(0.66,0.74,0.84),fog);
+      gl_FragColor=vec4(col,1.0);}`;
+  function sh(t,src){const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))S.errors.push('着色器编译失败: '+gl.getShaderInfoLog(s));return s;}
+  prog=gl.createProgram();gl.attachShader(prog,sh(gl.VERTEX_SHADER,vs));gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,fs));gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) S.errors.push('着色器链接失败: '+gl.getProgramInfoLog(prog));
+  loc={aPos:gl.getAttribLocation(prog,'aPos'),aNrm:gl.getAttribLocation(prog,'aNrm'),aCol:gl.getAttribLocation(prog,'aCol'),uMVP:gl.getUniformLocation(prog,'uMVP'),uSun:gl.getUniformLocation(prog,'uSun'),uEye:gl.getUniformLocation(prog,'uEye')};
+  const N=CFG.N, idx=new Uint16Array((N-1)*(N-1)*6); let k=0;
+  for(let j=0;j<N-1;j++)for(let i=0;i<N-1;i++){const a=j*N+i,b=a+1,c=a+N,d=c+1;idx[k++]=a;idx[k++]=c;idx[k++]=b;idx[k++]=b;idx[k++]=c;idx[k++]=d;}
+  idxCount=k; ibo=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idx,gl.STATIC_DRAW);
+  vbo=gl.createBuffer(); S.webgl=true;
+}
+function build3D(){
+  mapCache=null; if(!gl) return;
+  const N=CFG.N, c=CFG.SIZE/(N-1), data=new Float32Array(N*N*9);
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){const x=i*c,z=j*c,h=S.heights[j*N+i],n=normalAt(x,z),col=colorAt(h),o=(j*N+i)*9;
+    data.set([x,h,z,n[0],n[1],n[2],col[0]/255,col[1]/255,col[2]/255],o);}
+  gl.bindBuffer(gl.ARRAY_BUFFER,vbo); gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
+}
+function persp(fy,a,n,f){const t=1/Math.tan(fy/2);return [t/a,0,0,0,0,t,0,0,0,0,(f+n)/(n-f),-1,0,0,2*f*n/(n-f),0];}
+function lookAt(e,c,u){const sub=(p,q)=>[p[0]-q[0],p[1]-q[1],p[2]-q[2]],cr=(p,q)=>[p[1]*q[2]-p[2]*q[1],p[2]*q[0]-p[0]*q[2],p[0]*q[1]-p[1]*q[0]],nm=p=>{const l=Math.hypot(...p);return[p[0]/l,p[1]/l,p[2]/l];},dt=(p,q)=>p[0]*q[0]+p[1]*q[1]+p[2]*q[2];
+  const z=nm(sub(e,c)),x=nm(cr(u,z)),y=cr(z,x);return [x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dt(x,e),-dt(y,e),-dt(z,e),1];}
+function mul(a,b){const r=new Array(16);for(let c=0;c<4;c++)for(let rr=0;rr<4;rr++){let s=0;for(let k=0;k<4;k++)s+=a[k*4+rr]*b[c*4+k];r[c*4+rr]=s;}return r;}
+function eyePos(){const cp=Math.cos(cam.pitch);return [cam.target[0]+cam.dist*cp*Math.sin(cam.yaw),cam.target[1]+cam.dist*Math.sin(cam.pitch),cam.target[2]+cam.dist*cp*Math.cos(cam.yaw)];}
+function render3D(){
+  if(!gl||S.mode!=='3d') return; fitCanvas(C3);
+  gl.viewport(0,0,C3.width,C3.height); gl.clearColor(0.66,0.74,0.84,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST);
+  gl.useProgram(prog); const e=eyePos();
+  gl.uniformMatrix4fv(loc.uMVP,false,new Float32Array(mul(persp(0.9,C3.width/C3.height,1,3000),lookAt(e,cam.target,[0,1,0]))));
+  const s=[-0.5,0.7,-0.45],l=Math.hypot(...s); gl.uniform3f(loc.uSun,s[0]/l,s[1]/l,s[2]/l); gl.uniform3f(loc.uEye,e[0],e[1],e[2]);
+  gl.bindBuffer(gl.ARRAY_BUFFER,vbo);
+  gl.enableVertexAttribArray(loc.aPos);gl.vertexAttribPointer(loc.aPos,3,gl.FLOAT,false,36,0);
+  gl.enableVertexAttribArray(loc.aNrm);gl.vertexAttribPointer(loc.aNrm,3,gl.FLOAT,false,36,12);
+  gl.enableVertexAttribArray(loc.aCol);gl.vertexAttribPointer(loc.aCol,3,gl.FLOAT,false,36,24);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo); gl.drawElements(gl.TRIANGLES,idxCount,gl.UNSIGNED_SHORT,0);
+}
+let drag=null; C3.addEventListener('contextmenu',e=>e.preventDefault());
+C3.addEventListener('mousedown',e=>{drag={b:e.button,x:e.clientX,y:e.clientY};});
+window.addEventListener('mouseup',()=>drag=null);
+window.addEventListener('mousemove',e=>{if(!drag||S.mode!=='3d')return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;
+  if(drag.b===0&&!e.shiftKey){cam.yaw-=dx*0.006;cam.pitch=Math.min(1.5,Math.max(0.08,cam.pitch+dy*0.006));}
+  else{const k=cam.dist*0.0015,sy=Math.sin(cam.yaw),cy=Math.cos(cam.yaw);cam.target[0]-=(cy*dx-sy*dy)*k;cam.target[2]-=(-sy*dx-cy*dy)*k;}
+  requestAnimationFrame(render3D);});
+C3.addEventListener('wheel',e=>{e.preventDefault();cam.dist=Math.min(900,Math.max(30,cam.dist*Math.exp(e.deltaY*0.001)));requestAnimationFrame(render3D);},{passive:false});
+
+// ===== 界面 =====
+function setMode(m){S.mode=(m==='3d')?'3d':'2d';
+  C2.style.display=S.mode==='2d'?'block':'none'; C3.style.display=S.mode==='3d'?'block':'none';
+  document.getElementById('m2d').classList.toggle('on',S.mode==='2d'); document.getElementById('m3d').classList.toggle('on',S.mode==='3d');
+  refresh(); writeHash();}
+function refresh(){ if(!S.heights) return;
+  if(S.mode==='2d') draw2D(); else render3D();
+  document.getElementById('hud').innerHTML='种子 '+S.seed+'<br>地块 '+CFG.SIZE+' × '+CFG.SIZE+' 米　网格 '+CFG.N+' × '+CFG.N+'<br>高度 '+S.minH.toFixed(1)+' ~ '+S.maxH.toFixed(1)+' 米'+'<br><span style="color:#8a909c">当前为占位地形（任务 1.1 替换为正式地形）</span>';
+  document.getElementById('probe').innerHTML=S.mode==='2d'?'移动鼠标到地形上查看坐标':'左键拖动：旋转<br>右键 / Shift+拖动：平移<br>滚轮：缩放';
+  document.getElementById('status').textContent=S.errors.length?('⚠ '+S.errors[0]):'就绪';
+}
+function writeHash(){history.replaceState(null,'','#seed='+S.seed+'&mode='+S.mode);}
+document.getElementById('gen').onclick=()=>generate(document.getElementById('seed').value);
+document.getElementById('rnd').onclick=()=>generate(Math.floor(Math.random()*1e8));
+document.getElementById('seed').addEventListener('keydown',e=>{if(e.key==='Enter')generate(e.target.value);});
+document.getElementById('m2d').onclick=()=>setMode('2d'); document.getElementById('m3d').onclick=()=>setMode('3d');
+window.addEventListener('resize',refresh);
+
+// 供验证环境调用的接口
+window.sim={generate,setMode,heightAt,state:()=>({seed:S.seed,mode:S.mode,N:CFG.N,size:CFG.SIZE,minH:S.minH,maxH:S.maxH,webgl:S.webgl,errors:S.errors.slice()})};
+
+// 启动：支持网址参数 #seed=xxx&mode=3d
+init3D();
+const hp=new URLSearchParams(location.hash.slice(1));
+S.mode=hp.get('mode')==='3d'?'3d':'2d';
+generate(hp.get('seed')||20261005);
+setMode(S.mode);
+</script>
+</body>
+</html>
