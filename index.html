@@ -337,7 +337,7 @@ function refresh(){ if(!S.heights) return;
 }
 function writeHash(){const q=new URLSearchParams();q.set('seed',P.seed);q.set('relief',P.relief);q.set('river',P.river?1:0);q.set('town',P.town);q.set('walls',P.walls);
   if(O.castle){q.set('cx',O.castle.x.toFixed(1));q.set('cz',O.castle.z.toFixed(1));} q.set('mode',S.mode);
-  history.replaceState(null,'','#'+q.toString());}
+  const u=location.href.split('#')[0]+'#'+q.toString(); try{history.replaceState(null,'',u);}catch(e){} }
 function readHash(){const q=new URLSearchParams(location.hash.slice(1));
   if(q.has('seed')) P.seed=Math.floor(Number(q.get('seed')))||0;
   if(q.has('relief')) P.relief=clamp(Number(q.get('relief'))||1,0.5,1.5);
