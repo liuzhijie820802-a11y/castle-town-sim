@@ -58,6 +58,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
     <div>城堡位置：<span id="cmode">自动</span></div>
     <button id="cauto">恢复自动选址</button>
     <div class="tip">在 2D 俯视里可以直接拖动城堡。手动位置在改参数、换种子后都会保留。</div>
+    <button id="earth">显示挖填方</button>
     <button id="copy">复制当前设置链接</button>
   </div>
   <div id="rulesbox"><div class="ph">硬规则（运行时自动检查）</div><div id="rules"></div><div class="tip">软偏好（城堡偏高地、城镇在下坡、越近城堡越密）只是可调倾向，不算错误。</div></div>
@@ -109,9 +110,9 @@ function generate(seed){
     if(d<CFG.RIVER_BED) H=0; else if(d<CFG.RIVER_BED+CFG.RIVER_BANK){const t=(d-CFG.RIVER_BED)/CFG.RIVER_BANK;H*=t*t*(3-2*t);}
     h[j*N+i]=H; if(H<mn)mn=H; if(H>mx)mx=H;
   }
-  S.heights=h; S.minH=mn; S.maxH=mx;
+  S.heights=h; S.baseHeights=h.slice(); S.minH=mn; S.maxH=mx; computeWater();
   S.autoCastle=pickCastleSite();
-  syncPanel(); build3D(); buildScene(); refresh(); writeHash();
+  syncPanel(); buildScene(); refresh(); writeHash();
 }
 function heightAt(x,z){ // 世界坐标(米) -> 高度(米)，双线性插值
   const N=CFG.N, c=CFG.SIZE/(N-1);
@@ -119,6 +120,23 @@ function heightAt(x,z){ // 世界坐标(米) -> 高度(米)，双线性插值
   const i=Math.floor(fx), j=Math.floor(fz), tx=fx-i, tz=fz-j, h=S.heights;
   const a=h[j*N+i], b=h[j*N+i+1], d=h[(j+1)*N+i], e=h[(j+1)*N+i+1];
   return a*(1-tx)*(1-tz)+b*tx*(1-tz)+d*(1-tx)*tz+e*tx*tz;
+}
+function baseAt(x,z){ // 城镇修正之前的原始地形高度
+  const N=CFG.N, c=CFG.SIZE/(N-1);
+  const fx=Math.min(N-1.0001,Math.max(0,x/c)), fz=Math.min(N-1.0001,Math.max(0,z/c));
+  const i=Math.floor(fx), j=Math.floor(fz), tx=fx-i, tz=fz-j, h=S.baseHeights;
+  return h[j*N+i]*(1-tx)*(1-tz)+h[j*N+i+1]*tx*(1-tz)+h[(j+1)*N+i]*(1-tx)*tz+h[(j+1)*N+i+1]*tx*tz;
+}
+function computeWater(){ // 河道掩码：网格（地形修正时保护河道）+ 2D 地图
+  const N=CFG.N,c=CFG.SIZE/(N-1);S.waterGrid=new Uint8Array(N*N);
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++)if(riverDist(i*c,j*c)<CFG.RIVER_BED+1)S.waterGrid[j*N+i]=1;
+  const R=512;S.mapWater=new Uint8Array(R*R);
+  if(P.river)for(let y=0;y<R;y++)for(let x=0;x<R;x++)if(isWater((x+0.5)/R*CFG.SIZE,(y+0.5)/R*CFG.SIZE))S.mapWater[y*R+x]=1;
+}
+function earthTint(c,dd){ // 被城镇修正过的地面：平时显示为夯土色；打开“挖填方”时红色=挖、蓝色=填
+  if(Math.abs(dd)<=0.08) return c;
+  if(S.showEarth){const t=Math.min(1,Math.abs(dd)/3),q=dd<0?[225,70,60]:[70,125,235],m=0.3+0.6*t;return [c[0]+(q[0]-c[0])*m,c[1]+(q[1]-c[1])*m,c[2]+(q[2]-c[2])*m];}
+  const q=[168,146,110],m=0.4;return [c[0]+(q[0]-c[0])*m,c[1]+(q[1]-c[1])*m,c[2]+(q[2]-c[2])*m];
 }
 function normalAt(x,z){const e=1.0;const dx=heightAt(x+e,z)-heightAt(x-e,z), dz=heightAt(x,z+e)-heightAt(x,z-e);
   const n=[-dx,2*e,-dz], l=Math.hypot(n[0],n[1],n[2]); return [n[0]/l,n[1]/l,n[2]/l];}
@@ -163,10 +181,11 @@ function buildMap(){ // 512x512 地图：高度着色 + 山体阴影 + 等高线
     const k=y*R+x, h=hs[k], wx=(x+0.5)/R*CFG.SIZE, wz=(y+0.5)/R*CFG.SIZE;
     const n=normalAt(wx,wz), sh=0.55+0.6*Math.max(0,n[0]*L[0]+n[1]*L[1]+n[2]*L[2]);
     let c, f;
-    if(P.river && isWater(wx,wz)){ c=WATER; f=1.0; }
+    if(S.mapWater && S.mapWater[k]){ c=WATER; f=1.0; }
     else { c=colorAt(h); f=sh;
       const b=band[k], br=x<R-1?band[k+1]:b, bd=y<R-1?band[k+R]:b;
       if(b!==br||b!==bd){ f*= (Math.max(b,br,bd)%5===0)?0.62:0.8; } }
+    if(!(S.mapWater && S.mapWater[k])) c=earthTint(c,h-baseAt(wx,wz));
     img.data[k*4]=Math.min(255,c[0]*f); img.data[k*4+1]=Math.min(255,c[1]*f); img.data[k*4+2]=Math.min(255,c[2]*f); img.data[k*4+3]=255;
   }
   ctx.putImageData(img,0,0); mapCache=cv;
@@ -211,12 +230,12 @@ function draw2D(){
   ctx.fillStyle='#fff'; ctx.fillText('北',nx,ny+12*dpr);
 }
 function screenToWorld(ev){const v=S.view2d,r=C2.getBoundingClientRect();return {x:((ev.clientX-r.left)*v.dpr-v.ox)/v.sc,z:((ev.clientY-r.top)*v.dpr-v.oy)/v.sc};}
-let cdrag=false;
+let cdrag=false, dragRAF=0;
 C2.addEventListener('mousedown',ev=>{if(!S.view2d)return;const p=screenToWorld(ev),k=castle();if(Math.hypot(p.x-k.x,p.z-k.z)<=k.r){cdrag=true;ev.preventDefault();}});
-window.addEventListener('mouseup',()=>{if(cdrag){cdrag=false;C2.style.cursor='grab';syncPanel();refresh();writeHash();}});
+window.addEventListener('mouseup',()=>{if(cdrag){cdrag=false;C2.style.cursor='grab';if(dragRAF){cancelAnimationFrame(dragRAF);dragRAF=0;}buildScene();syncPanel();refresh();writeHash();}});
 C2.addEventListener('mousemove',ev=>{
   const v=S.view2d; if(!v) return; const p=screenToWorld(ev), P2=$('probe');
-  if(cdrag){O.castle={x:p.x,z:p.z};clampCastle();buildScene();syncPanel();refresh();C2.style.cursor='grabbing';}
+  if(cdrag){O.castle={x:p.x,z:p.z};clampCastle();if(!dragRAF)dragRAF=requestAnimationFrame(()=>{dragRAF=0;buildScene();syncPanel();refresh();});C2.style.cursor='grabbing';}
   else{const k=castle();C2.style.cursor=Math.hypot(p.x-k.x,p.z-k.z)<=k.r?'grab':'default';}
   if(p.x<0||p.z<0||p.x>CFG.SIZE||p.z>CFG.SIZE){P2.innerHTML='移动鼠标到地形上查看坐标';return;}
   P2.innerHTML='X '+p.x.toFixed(1)+' 米　Z '+p.z.toFixed(1)+' 米<br>高度 '+heightAt(p.x,p.z).toFixed(2)+' 米'+(isWater(p.x,p.z)?'（河道）':'');
@@ -273,14 +292,18 @@ function buildOverlay3D(){
 function build3D(){
   mapCache=null; if(!gl) return;
   const N=CFG.N, c=CFG.SIZE/(N-1), data=new Float32Array(N*N*9);
-  for(let j=0;j<N;j++)for(let i=0;i<N;i++){const x=i*c,z=j*c,h=S.heights[j*N+i],n=normalAt(x,z),col=isWater(x,z)?WATER:colorAt(h),o=(j*N+i)*9;
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){const x=i*c,z=j*c,h=S.heights[j*N+i],n=normalAt(x,z),col=isWater(x,z)?WATER:earthTint(colorAt(h),h-S.baseHeights[j*N+i]),o=(j*N+i)*9;
     data.set([x,h,z,n[0],n[1],n[2],col[0]/255,col[1]/255,col[2]/255],o);}
   gl.bindBuffer(gl.ARRAY_BUFFER,vbo); gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
 }
-function sceneCtx(){return {heightAt,riverDist,isWater,SIZE:CFG.SIZE,BED:CFG.RIVER_BED,HMAX:CFG.HMAX,castle:castle(),seed:P.seed};}
-function buildScene(){ // 生成整个场景并按硬规则自检
-  if(!window.SCENE){if(!S.errors.includes('场景模块没有加载'))S.errors.push('场景模块没有加载');return;}
-  const t0=performance.now(),cx=sceneCtx(); S.scene=SCENE.build(cx); S.audit=SCENE.audit(S.scene,cx); S.sceneMs=performance.now()-t0; build3DObjects();}
+function sceneCtx(){return {heightAt,riverDist,isWater,SIZE:CFG.SIZE,BED:CFG.RIVER_BED,HMAX:CFG.HMAX,castle:castle(),seed:P.seed,baseAt,
+  grid:{N:CFG.N,cell:CFG.SIZE/(CFG.N-1),h:S.heights,base:S.baseHeights,water:S.waterGrid}};}
+function buildScene(){ // 先恢复原始地形，再生成场景（场景会修正地形），最后按硬规则自检
+  if(S.baseHeights) S.heights.set(S.baseHeights);
+  if(!window.SCENE){if(!S.errors.includes('场景模块没有加载'))S.errors.push('场景模块没有加载');build3D();return;}
+  const t0=performance.now(),cx=sceneCtx(); S.scene=SCENE.build(cx); S.audit=SCENE.audit(S.scene,cx);
+  const N=CFG.N,c=CFG.SIZE/(N-1);let cut=0,fill=0;for(let k=0;k<N*N;k++){const d=S.heights[k]-S.baseHeights[k];if(d<0)cut-=d;else fill+=d;}
+  S.earth={cut:cut*c*c,fill:fill*c*c}; S.sceneMs=performance.now()-t0; build3D(); build3DObjects();}
 let obo=null, objCount=0;
 const C01=c=>[c[0]/255,c[1]/255,c[2]/255];
 function build3DObjects(){ if(!gl||!S.scene) return; const out=[], sn=S.scene, K=SCENE.COL, RED=C01(K.bad);
@@ -380,7 +403,9 @@ function refresh(){ if(!S.heights) return;
     +'<br>河流 '+(P.river?'有':'无')+'　城镇 '+TOWN[P.town].name+'<br>城墙 '+P.walls+' 层（外墙半径 '+k.r+' 米）'
     +'<br>城堡 ('+k.x.toFixed(0)+', '+k.z.toFixed(0)+') '+(k.manual?'手动':'自动')
     +'<br>房屋 '+(S.scene?S.scene.boxes.filter(b=>b.kind==='house').length:0)+' · 道路 '+(S.scene?S.scene.roads.length:0)+' 条 · 角色 '+(S.scene?S.scene.people.length:0)
-    +'<br><span style="color:#8a909c">主体雏形 v0.5：方块示意，等你看完再细化</span>';
+    +(S.earth?'<br>土方 挖 '+Math.round(S.earth.cut)+' · 填 '+Math.round(S.earth.fill)+' 立方米':'')
+    +(S.scene&&S.scene.grade?'<br>路面坡度 修正前平均 '+(S.scene.grade.baseMean*100).toFixed(0)+'% → 修正后 '+(S.scene.grade.mean*100).toFixed(0)+'%（'+Math.round(S.scene.grade.okFrac*100)+'% 路段不超过 12%）':'')
+    +'<br><span style="color:#8a909c">主体雏形 v0.6：分布随地形调整，城镇会修正地形</span>';
   if(S.audit) $('rules').innerHTML=SCENE.RULES.hard.map(r=>{const n=S.audit.cnt[r.id];return '<div class="'+(n?'ng':'ok')+'">'+(n?'✗ ':'✓ ')+r.name+(n?' ×'+n:'')+'</div>';}).join('');
   if(S.mode==='3d') $('probe').innerHTML='左键拖动：旋转<br>右键 / Shift+拖动：平移<br>滚轮：缩放'; else if(!/^X /.test($('probe').innerHTML)) $('probe').innerHTML='移动鼠标到地形上查看坐标';
   $('status').textContent=S.flash||(S.errors.length?('⚠ '+S.errors[0]):(S.audit&&S.audit.total?('⚠ 硬规则有 '+S.audit.total+' 处违反（已标红）'):'就绪'));
@@ -406,6 +431,7 @@ $('river').onchange=e=>setParams({river:e.target.checked});
 $('town').onchange=e=>setParams({town:e.target.value});
 $('walls').onchange=e=>setParams({walls:Number(e.target.value)});
 $('cauto').onclick=resetCastle;
+$('earth').onclick=()=>{S.showEarth=!S.showEarth;$('earth').textContent=S.showEarth?'隐藏挖填方':'显示挖填方';build3D();refresh();};
 $('copy').onclick=()=>{if(navigator.clipboard)navigator.clipboard.writeText(location.href).then(()=>flash('链接已复制'),()=>flash('复制失败，请直接复制地址栏'));else flash('请直接复制地址栏');};
 window.addEventListener('resize',refresh);
 
@@ -413,7 +439,11 @@ window.addEventListener('resize',refresh);
 window.sim={generate,setMode,heightAt,setParams,castle,riverDist,isWater,resetCastle,
   setOverlay3D:b=>{S.overlay3d=!!b;refresh();}, overlayCount:()=>ovCount,
   scene:()=>{const s=S.scene;if(!s)return null;const n=k=>s.boxes.filter(b=>b.kind===k).length;return {houses:n('house'),walls:n('wall'),towers:n('tower'),keep:n('keep'),roads:s.roads.length,bridges:s.roads.filter(r=>r.deck.some(d=>d!==null)).length,people:s.people.length,fields:s.fields.length,gate:s.gate};},
-  audit:()=>S.audit, sceneMs:()=>S.sceneMs, townCenter:()=>S.scene&&S.scene.T,
+  audit:()=>S.audit, sceneMs:()=>S.sceneMs, earth:()=>S.earth, baseAt,
+  grade:()=>S.scene&&S.scene.grade, ringStd:()=>S.scene?S.scene.ringStd:null,
+  flat:()=>S.scene.boxes.filter(b=>b.kind==='house').map(b=>{const f=SCENE.footprint(b).map(p=>heightAt(p[0],p[1]));return Math.max(...f)-Math.min(...f);}),
+  flatBase:()=>S.scene.boxes.filter(b=>b.kind==='house').map(b=>{const f=SCENE.footprint(b).map(p=>baseAt(p[0],p[1]));return Math.max(...f)-Math.min(...f);}),
+  setShowEarth:b=>{S.showEarth=!!b;$('earth').textContent=S.showEarth?'隐藏挖填方':'显示挖填方';build3D();refresh();}, townCenter:()=>S.scene&&S.scene.T,
   setCam:(yaw,pitch,dist,tx,tz)=>{cam.yaw=yaw;cam.pitch=pitch;cam.dist=dist;cam.target=tx==null?[CFG.SIZE/2,6,CFG.SIZE/2]:[tx,heightAt(tx,tz)+2,tz];refresh();},
   params:()=>({...P}),
   setCastle:(x,z)=>{O.castle={x,z};clampCastle();buildScene();syncPanel();refresh();writeHash();},
