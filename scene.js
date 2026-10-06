@@ -84,8 +84,12 @@ function build(ctx){
   const gmax=b=>{let v=-1e9;for(const p of footprint(b))v=Math.max(v,heightAt(p[0],p[1]));return v;};
   const gmean=b=>{const f=footprint(b);let v=0;for(const p of f)v+=heightAt(p[0],p[1]);return v/f.length;};
   const wet=(b,m)=>footprint(b).some(p=>riverDist(p[0],p[1])<BED+m);
-  const add=o=>{S.boxes.push(o);return o;};
+  const GC=16,grid=new Map(); // 建筑空间索引：16 米一格，查重叠只看附近格子
+  const cellsOf=(b,m)=>{const R=Math.hypot(b.w,b.d)/2+(m||0),out=[];for(let gx=Math.floor((b.x-R)/GC);gx<=Math.floor((b.x+R)/GC);gx++)for(let gz=Math.floor((b.z-R)/GC);gz<=Math.floor((b.z+R)/GC);gz++)out.push(gx+','+gz);return out;};
+  const add=o=>{S.boxes.push(o);for(const k of cellsOf(o)){let a=grid.get(k);if(!a)grid.set(k,a=[]);a.push(o);}return o;};
+  const hitsBox=(b,m)=>{const seen=new Set();for(const k of cellsOf(b,m)){const a=grid.get(k);if(a)for(const o of a){if(seen.has(o))continue;seen.add(o);if(overlapRect(o,b,m))return true;}}return false;};
   const grad=(x,z)=>[(heightAt(x+1,z)-heightAt(x-1,z))/2,(heightAt(x,z+1)-heightAt(x,z-1))/2];
+  const tm={},now=()=>performance.now();let tl=now();const lap=k=>{const n=now();tm[k]=(tm[k]||0)+n-tl;tl=n;}; // 分阶段计时（毫秒）
 
   // 1. 城镇方向（软偏好：城镇在下坡、离河远一点、往地块内侧有空间）
   const midR=K.r+(K.townR-K.r)*0.45;let ag=0,best=-1e9;
@@ -119,11 +123,13 @@ function build(ctx){
       } else {const b=add({kind:'wall',x:mx,z:mz,w:len,d:DIM.WALL_T,yaw,layer:L});b.y1=top;if(L===0&&i%2===0)outerSegs.push(b);}}
     for(let i=0;i<n;i++){const v=V[i];add({kind:'tower',x:v[0],z:v[1],w:5,d:5,yaw:v[2],layer:L,y1:Math.max(tops[i],tops[(i+1)%n])+3});}}
   S.rOut=Math.max(...rings[0].map(v=>v[3]));
+  lap('城墙');
 
   // 3. 主堡和城堡内建筑：先平整内院地基
   const kp=add({kind:'keep',x:K.x,z:K.z,w:12,d:12,yaw:ag});const ky=gmean(kp);ed.rect(kp,ky,2,4);kp.y1=ky+16;
   [Math.PI/2,Math.PI,Math.PI*1.5].forEach((da,i)=>{const a=ag+da,b=add({kind:'inner',x:K.x+Math.cos(a)*9.5,z:K.z+Math.sin(a)*9.5,w:3,d:3,yaw:ag});
     const y=gmean(b);ed.rect(b,y,0.8,2);b.y1=y+5+i;});
+  lap('主堡');
 
   // 4. 道路：每一步在几个方向里挑坡度小、少过河、不偏离大方向的；过河时直走架桥
   function makeRoad(x,z,a,len,w,main){const pts=[[x,z]],a0=a;let s=0;
@@ -152,11 +158,14 @@ function build(ctx){
   const T=mp[ti];S.T=T;
   const headAt=i=>{const a=mp[Math.max(0,i-1)],b=mp[Math.min(mp.length-1,i+1)];return Math.atan2(b[1]-a[1],b[0]-a[0]);};
   const aT=headAt(ti);
-  for(const sg of [-1,1]) contourRoad(T,sg,1.7*midR);
+  // 环城路：第一圈从广场出发，城镇越大圈数越多（约每 30 米一圈），每圈从主路与该半径的交点出发
+  for(let rr=midR;rr<K.townR-8;rr+=30){let st=T;if(rr>midR){const i=mp.findIndex(p=>Math.hypot(p[0]-K.x,p[1]-K.z)>=rr);if(i<0)break;st=mp[i];}
+    for(const sg of [-1,1]) contourRoad(st,sg,1.7*rr);}
   for(const r of S.roads.filter(r=>r.ring)){const p=r.pts;for(let i=8;i<p.length-3;i+=12){const a=Math.atan2(p[i+1][1]-p[i-1][1],p[i+1][0]-p[i-1][0]);
     const out=Math.cos(a+Math.PI/2)*(p[i][0]-K.x)+Math.sin(a+Math.PI/2)*(p[i][1]-K.z)>0?1:-1;makeRoad(p[i][0],p[i][1],a+out*Math.PI/2,18+rnd()*12,DIM.ROAD_W);}}
   for(const f of [0.2,0.75,1.05]){const rr=K.r+(K.townR-K.r)*f,i=mp.findIndex(p=>Math.hypot(p[0]-K.x,p[1]-K.z)>=rr);
     if(i>0&&Math.abs(i-ti)>5) for(const sg of [-1,1]) makeRoad(mp[i][0],mp[i][1],headAt(i)+sg*Math.PI/2,22+rnd()*14,DIM.ROAD_W);}
+  lap('路网');
   // 线形平滑：去掉逐步转向留下的折线（两端不动）
   for(const r of S.roads){const p=r.pts;for(let it=0;it<3;it++){const q=p.map(v=>v.slice());for(let i=1;i<p.length-1;i++){q[i][0]=(p[i-1][0]+p[i][0]*2+p[i+1][0])/4;q[i][1]=(p[i-1][1]+p[i][1]*2+p[i+1][1])/4;}for(let i=1;i<p.length-1;i++){p[i][0]=q[i][0];p[i][1]=q[i][1];}}}
   // 路基：纵断面平滑并限坡，再整平路面、两侧放坡；桥段按两岸高度架设
@@ -169,6 +178,7 @@ function build(ctx){
       for(let i=1;i<n;i++)if(!fix[i])s[i]=clamp(s[i],s[i-1]-m,s[i-1]+m);for(let i=n-2;i>=0;i--)if(!fix[i])s[i]=clamp(s[i],s[i+1]-m,s[i+1]+m);}
     for(let i=0;i<n;i++)r.deck[i]=wt[i]?s[i]+0.3:null;
     ed.road(r,s,r.w/2+0.8,3);}
+  lap('路基');
 
   // 5. 广场、水井、摊位（广场整平）
   S.square={x:T[0],z:T[1],r:9};ed.disc(T[0],T[1],9.5,heightAt(T[0],T[1]),4);
@@ -178,7 +188,7 @@ function build(ctx){
 
   // 6. 房屋：沿路两侧划出临街地块（第一排）和后排地块（第二排）；每块地试几种退后距离和尺寸，
   //    按“土方少、离城堡近、离河远”打分，好地先建，每块地只建一栋，建一栋平整一块地基
-  const sp=RULES.soft.houseSpacing,target=Math.round((K.townR-K.r)*1.1),cands=[],RJ={far:0,square:0,map:0,wet:0,steep:0,road:0,overlap:0};S.rejects=RJ;
+  const sp=RULES.soft.houseSpacing,target=Math.round(0.013*(K.townR*K.townR-K.r*K.r)),cands=[],RJ={far:0,square:0,map:0,wet:0,steep:0,road:0,overlap:0};S.rejects=RJ;
   let slotId=0;
   for(const r of S.roads){let acc=0;const p=r.pts;
     for(let i=1;i<p.length;i++){acc+=2;if(acc<sp)continue;acc=0;if(r.deck[i]!==null)continue;
@@ -196,16 +206,18 @@ function build(ctx){
           const score=-RULES.soft.earthWeight*dev-RULES.soft.denseNearCastle*(dc-S.rOut)/(K.townR-S.rOut+10)*1.5-(riverDist(b.x,b.z)<BED+8?0.4:0)
             -row*RULES.soft.backRow-push*0.05-(k<1?0.1:0)+jit*0.3;
           cands.push({b,h,score,slot});}}}}
+  lap('房屋候选');
   for(const r of S.roads){let x0=1e9,z0=1e9,x1=-1e9,z1=-1e9;for(const q of r.pts){x0=Math.min(x0,q[0]);z0=Math.min(z0,q[1]);x1=Math.max(x1,q[0]);z1=Math.max(z1,q[1]);}r.bb=[x0,z0,x1,z1];}
   const nearRoad=(x,z,m)=>S.roads.some(r=>{const e=r.w/2+m;return x>=r.bb[0]-e&&x<=r.bb[2]+e&&z>=r.bb[1]-e&&z<=r.bb[3]+e&&roadDist(r,x,z)<e;});
   cands.sort((a,b)=>b.score-a.score);let built=0;const used=new Set();
   for(const c of cands){if(built>=target)break;if(used.has(c.slot))continue;const b=c.b;
     if(footprint(b).some(q=>nearRoad(q[0],q[1],0.6))){RJ.road++;continue;}
-    if(S.boxes.some(o=>overlapRect(o,b,0.8))){RJ.overlap++;continue;}
+    if(hitsBox(b,0.8)){RJ.overlap++;continue;}
     const lo=gmin(b),hi=gmax(b),y=b.row?gmean(b):heightAt(b.sx,b.sz); // 临街房地基与街面同高；后排房取地块平均高度
     ed.rect(b,y,1.5,2+1.5*(hi-lo));
     b.y1=y+c.h;b.h=c.h;b.cut=Math.max(0,hi-y);b.fill=Math.max(0,y-lo);delete b.sx;delete b.sz;add(b);built++;used.add(c.slot);}
-  S.houseCands=cands.length;
+  S.houseCands=cands.length;S.houseTarget=target;
+  lap('房屋落位');
 
   // 7. 农田：挑平缓的地，长边顺等高线
   const fc=[];
@@ -214,15 +226,18 @@ function build(ctx){
     if(corners(f).some(c=>!inMap(c[0],c[1],1))||wet(f,2))continue;const v=gmax(f)-gmin(f);if(v>4)continue;
     fc.push({f,score:-v-0.01*Math.abs(dc-(K.townR+20))+rnd()*0.2});}
   fc.sort((a,b)=>b.score-a.score);
-  for(const c of fc){if(S.fields.length>=36)break;const f=c.f;
+  const fieldCap=Math.round(Math.PI*((K.townR+70)**2-(0.85*K.townR)**2)/1280);
+  for(const c of fc){if(S.fields.length>=fieldCap)break;const f=c.f;
     if(footprint(f).some(q=>S.roads.some(r=>roadDist(r,q[0],q[1])<r.w/2+1)))continue;
-    if(S.fields.some(o=>overlapRect(o,f,1))||S.boxes.some(o=>overlapRect(o,f,1)))continue;
+    if(S.fields.some(o=>overlapRect(o,f,1))||hitsBox(f,1))continue;
     f.col=S.fields.length%2?'field1':'field2';S.fields.push(f);}
 
+  lap('农田');
   // 8. 地形改完后，所有建筑重新落地；城门洞按平整后的地面重算
   for(const o of S.boxes){if(o.kind==='lintel')continue;o.y0=gmin(o)-(o.kind==='house'||o.kind==='stall'||o.kind==='well'||o.kind==='inner'?0.3:0.5);if(o.y1<o.y0+1)o.y1=o.y0+1;}
   for(const li of S.boxes)if(li.kind==='lintel'){const gt=gmax({x:li.x,z:li.z,w:li.w,d:li.d,yaw:li.yaw});li.y0=gt+DIM.GATE_H;li.y1=Math.max(li.y1,li.y0+1);if(li.layer===0&&S.gate)S.gate.h=li.y0-gt;}
 
+  lap('落地');
   // 9. 角色（磁吸：站到所在位置最高的可站立表面上）
   const P=S.people,free=(x,z)=>P.every(q=>Math.hypot(q.x-x,q.z-z)>=1.2);
   const person=(role,x,z,wall)=>{if(!inMap(x,z,0.5)||!free(x,z))return;P.push({role,x,z,y:wall?wall.y1:surfaceAt(S,ctx,x,z),h:DIM.PERSON_H,wall:wall||null});};
@@ -233,6 +248,7 @@ function build(ctx){
     const x=p[i][0]-Math.sin(yaw)*sg*o,z=p[i][1]+Math.cos(yaw)*sg*o;if(Math.hypot(x-K.x,z-K.z)<S.rOut+2)continue;person('villager',x,z);}}
   S.fields.slice(0,8).forEach(f=>person('villager',f.x,f.z));
 
+  lap('角色');
   // 10. 统计：路面坡度、环城路高差
   let gm=0,gs=0,gn=0,gok=0,bs=0;const rs=[];
   for(const r of S.roads){for(let i=0;i<r.pts.length-1;i++){const a=r.pts[i],b=r.pts[i+1],ya=roadSurface(r,ctx,a[0],a[1]),yb=roadSurface(r,ctx,b[0],b[1]);
@@ -241,6 +257,7 @@ function build(ctx){
     if(r.ring)for(const q of r.pts)rs.push(heightAt(q[0],q[1]));}
   S.grade={max:gm,mean:gn?gs/gn:0,okFrac:gn?gok/gn:1,baseMean:gn?bs/gn:0};
   if(rs.length){const m=rs.reduce((a,b)=>a+b,0)/rs.length;S.ringStd=Math.sqrt(rs.reduce((a,b)=>a+(b-m)*(b-m),0)/rs.length);}else S.ringStd=null;
+  lap('统计');S.timing=tm;
   return S;}
 
 function audit(S,ctx){
@@ -252,8 +269,10 @@ function audit(S,ctx){
     if(fp.some(q=>riverDist(q[0],q[1])<BED))bad('H2',o,'压到河道');
     if(corners(o).some(c=>c[0]<0||c[1]<0||c[0]>SIZE||c[1]>SIZE))bad('H8',o,'超出地块');}
   const bld=S.boxes.filter(o=>['house','keep','inner','well','stall'].includes(o.kind)),walls=S.boxes.filter(o=>['wall','tower','lintel'].includes(o.kind));
-  for(let i=0;i<bld.length;i++){for(let j=i+1;j<bld.length;j++)if(overlapRect(bld[i],bld[j],0)){bad('H3',bld[i],'与其他建筑重叠');bld[j].bad=true;}
-    for(const w of walls)if(overlapRect(bld[i],w,0)){bad('H3',bld[i],'与城墙重叠');w.bad=true;}}
+  const near=(a,b)=>Math.hypot(a.x-b.x,a.z-b.z)<=(Math.hypot(a.w,a.d)+Math.hypot(b.w,b.d))/2; // 先按距离粗筛，再精确判断
+  const srt=bld.slice().sort((a,b)=>a.x-b.x);
+  for(let i=0;i<srt.length;i++){for(let j=i+1;j<srt.length&&srt[j].x-srt[i].x<20;j++)if(near(srt[i],srt[j])&&overlapRect(srt[i],srt[j],0)){bad('H3',srt[i],'与其他建筑重叠');srt[j].bad=true;}
+    for(const w of walls)if(near(srt[i],w)&&overlapRect(srt[i],w,0)){bad('H3',srt[i],'与城墙重叠');w.bad=true;}}
   for(const o of S.boxes)if(o.kind==='house'&&footprint(o).some(q=>S.roads.some(r=>roadDist(r,q[0],q[1])<r.w/2)))bad('H4',o,'压到道路');
   for(const p of S.people){
     if(p.wall){if(Math.abs(p.y-p.wall.y1)>0.05||!inRect(p.wall,p.x,p.z,-DIM.PARAPET/2))bad('H5',p,'没站在城墙走道上');}
