@@ -53,6 +53,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
     <label>地形起伏 <span id="vRelief">1.0</span><input id="relief" type="range" min="0.5" max="1.5" step="0.1" value="1"></label>
     <label class="row"><input id="river" type="checkbox" checked> 有河流</label>
     <label>城镇规模<select id="town"><option value="s">小</option><option value="m" selected>中</option><option value="l">大</option></select></label>
+    <label>地块大小<select id="size"><option value="256" selected>256 米</option><option value="512">512 米</option><option value="1024">1024 米</option></select></label>
     <label>城墙层数<select id="walls"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select></label>
     <div class="sep"></div>
     <div>城堡位置：<span id="cmode">自动</span></div>
@@ -72,7 +73,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
 // ===== 配置 =====
 const CFG = { N: 129, SIZE: 256, HMAX: 32, RIVER_BED: 4, RIVER_BANK: 18 }; // 网格顶点数 / 地块边长(米) / 最大高度(米) / 河床半宽 / 河岸过渡宽度
 const TOWN = { s: { name: '小', r: 25 }, m: { name: '中', r: 40 }, l: { name: '大', r: 60 } };
-const P = { seed: 20261005, relief: 1, river: true, town: 'm', walls: 2 };  // 生成参数
+const P = { seed: 20261005, relief: 1, river: true, town: 'm', walls: 2, size: 256 };  // 生成参数
 const O = { castle: null };                                                 // 人工覆盖：重新生成时保留，不被自动结果冲掉
 const S = { mode: '2d', heights: null, minH: 0, maxH: 0, errors: [], view2d: null, webgl: false, river: null, autoCastle: null };
 window.addEventListener('error', e => S.errors.push(String(e.message)));
@@ -89,29 +90,38 @@ function fbm(x,y,s){let v=0,amp=0.5,f=1,norm=0;for(let o=0;o<5;o++){v+=amp*vnois
 
 // ===== 河流（由种子决定走向，南北贯穿）=====
 function riverX(z){const r=S.river;return r.x0+r.amp*Math.sin(z/CFG.SIZE*r.freq*Math.PI*2+r.phase);}
-function riverDist(x,z){ // 到河道中心线的真实距离(米)，40 米以外只做近似
+function riverDist(x,z){ // 到河道中心线的距离(米)：生成时算好一张距离场，之后查表（双线性插值）
   if(!P.river||!S.river) return Infinity;
+  const F=S.riverField; if(F){const N=CFG.N,c=CFG.SIZE/(N-1),fx=Math.min(N-1.0001,Math.max(0,x/c)),fz=Math.min(N-1.0001,Math.max(0,z/c)),i=Math.floor(fx),j=Math.floor(fz),tx=fx-i,tz=fz-j;
+    return F[j*N+i]*(1-tx)*(1-tz)+F[j*N+i+1]*tx*(1-tz)+F[(j+1)*N+i]*(1-tx)*tz+F[(j+1)*N+i+1]*tx*tz;}
+  return riverDistExact(x,z);}
+function riverDistExact(x,z){ // 精确距离（40 米以外只做近似），只在生成距离场时逐点调用
   let best=Infinity; for(let dz=-40;dz<=40;dz+=2){const zz=z+dz;const d=Math.hypot(x-riverX(zz),dz);if(d<best)best=d;} return best;}
 function isWater(x,z){return riverDist(x,z)<CFG.RIVER_BED;}
 
 // ===== 地形（占位地形，正式地形在任务 1.1 中替换）=====
 function generate(seed){
   if(seed!==undefined) P.seed=Math.floor(Number(seed))||0;
+  if(CFG.SIZE!==P.size) setSize(P.size);
+  const T0=performance.now(), KS=CFG.SIZE/256;   // 地块放大时，地形起伏和河道弯曲按米保持相同尺度
   const N=CFG.N, c=CFG.SIZE/(N-1), h=new Float32Array(N*N), rng=mulberry32(P.seed);
   const ox=rng()*1000, oy=rng()*1000, r2=mulberry32(P.seed^0x5bd1e995);
-  S.river={x0:CFG.SIZE*(0.3+0.4*r2()),amp:14+18*r2(),freq:0.8+0.9*r2(),phase:r2()*Math.PI*2};
+  S.river={x0:CFG.SIZE*(0.3+0.4*r2()),amp:(14+18*r2())*Math.sqrt(KS),freq:(0.8+0.9*r2())*KS,phase:r2()*Math.PI*2};
+  S.riverField=null; const RF=new Float32Array(N*N);
+  if(P.river){for(let j=0;j<N;j++)for(let i=0;i<N;i++)RF[j*N+i]=riverDistExact(i*c,j*c);S.riverField=RF;}
   let mn=1e9,mx=-1e9;
   for(let j=0;j<N;j++) for(let i=0;i<N;i++){
     const u=i/(N-1), v=j/(N-1);
-    let e = fbm(ox+u*4, oy+v*4, P.seed);
+    let e = fbm(ox+u*4*KS, oy+v*4*KS, P.seed);
     e = Math.pow(Math.max(0,(e-0.15)/0.75), 1.6);
     let H = Math.min(CFG.HMAX, Math.min(1,e)*CFG.HMAX*P.relief);
     const d=riverDist(i*c,j*c);
     if(d<CFG.RIVER_BED) H=0; else if(d<CFG.RIVER_BED+CFG.RIVER_BANK){const t=(d-CFG.RIVER_BED)/CFG.RIVER_BANK;H*=t*t*(3-2*t);}
     h[j*N+i]=H; if(H<mn)mn=H; if(H>mx)mx=H;
   }
-  S.heights=h; S.baseHeights=h.slice(); S.minH=mn; S.maxH=mx; computeWater();
-  S.autoCastle=pickCastleSite();
+  const T1=performance.now(); S.heights=h; S.baseHeights=h.slice(); S.minH=mn; S.maxH=mx; computeWater(); const T2=performance.now();
+  S.autoCastle=pickCastleSite(); const T3=performance.now();
+  S.timing={terrain:T1-T0,water:T2-T1,site:T3-T2};
   syncPanel(); buildScene(); refresh(); writeHash();
 }
 function heightAt(x,z){ // 世界坐标(米) -> 高度(米)，双线性插值
@@ -149,7 +159,7 @@ function colorAt(h){const t=Math.min(1,Math.max(0,h/CFG.HMAX));
 
 // ===== 城堡选址（自动结果，可被人工覆盖）=====
 function castleR(){return 10+6*P.walls;}            // 城堡外墙半径：1层16米 / 2层22米 / 3层28米
-function townR(){return castleR()+TOWN[P.town].r;}   // 城镇外缘半径
+function townR(){return castleR()+TOWN[P.town].r*CFG.SIZE/256;}   // 城镇外缘半径
 function slopeAround(x,z,r){let a=heightAt(x,z),b=a;for(let k=0;k<8;k++){const t=k/8*Math.PI*2;const hh=heightAt(x+Math.cos(t)*r,z+Math.sin(t)*r);a=Math.min(a,hh);b=Math.max(b,hh);}return b-a;}
 function pickCastleSite(){ // 偏好：地势高、场地平、离中心近、靠近但不压河道
   const rc=castleR(), m=rc+8; let best=null,bs=-1e9;
@@ -163,6 +173,8 @@ function pickCastleSite(){ // 偏好：地势高、场地平、离中心近、�
 }
 function castle(){const p=O.castle||S.autoCastle, r=castleR();
   return {x:p.x,z:p.z,r,townR:townR(),walls:P.walls,manual:!!O.castle,inWater:riverDist(p.x,p.z)<r};}
+function setSize(sz){ // 换地块大小：网格保持 2 米一格
+  CFG.SIZE=sz; CFG.N=sz/2+1; cam.target=[sz/2,6,sz/2]; cam.dist=340*sz/256; mapCache=null; if(gl) buildIndex();}
 function clampCastle(){if(!O.castle)return;const rc=castleR();O.castle.x=clamp(O.castle.x,rc,CFG.SIZE-rc);O.castle.z=clamp(O.castle.z,rc,CFG.SIZE-rc);}
 
 // ===== 画布工具 =====
@@ -173,7 +185,7 @@ function fitCanvas(cv){const dpr=window.devicePixelRatio||1, w=Math.max(1,Math.r
 // ===== 2D 俯视 =====
 let mapCache=null;
 function buildMap(){ // 512x512 地图：高度着色 + 山体阴影 + 等高线(2米一条，10米加粗) + 河道
-  const R=512, cv=document.createElement('canvas'); cv.width=cv.height=R;
+  const tm=performance.now(), R=512, cv=document.createElement('canvas'); cv.width=cv.height=R;
   const ctx=cv.getContext('2d'), img=ctx.createImageData(R,R), band=new Int16Array(R*R), hs=new Float32Array(R*R);
   const L=[-0.55,0.62,-0.55], ll=Math.hypot(...L); L[0]/=ll;L[1]/=ll;L[2]/=ll;
   for(let y=0;y<R;y++)for(let x=0;x<R;x++){const wx=(x+0.5)/R*CFG.SIZE, wz=(y+0.5)/R*CFG.SIZE; const h=heightAt(wx,wz); hs[y*R+x]=h; band[y*R+x]=Math.floor(h/2);}
@@ -188,7 +200,7 @@ function buildMap(){ // 512x512 地图：高度着色 + 山体阴影 + 等高线
     if(!(S.mapWater && S.mapWater[k])) c=earthTint(c,h-baseAt(wx,wz));
     img.data[k*4]=Math.min(255,c[0]*f); img.data[k*4+1]=Math.min(255,c[1]*f); img.data[k*4+2]=Math.min(255,c[2]*f); img.data[k*4+3]=255;
   }
-  ctx.putImageData(img,0,0); mapCache=cv;
+  ctx.putImageData(img,0,0); mapCache=cv; if(S.timing) S.timing.map=performance.now()-tm;
 }
 function drawCastleOverlay(ctx){
   const v=S.view2d, k=castle(), d=v.dpr, sx=v.ox+k.x*v.sc, sy=v.oy+k.z*v.sc, side=CFG.SIZE*v.sc;
@@ -212,7 +224,7 @@ function draw2D(){
   S.view2d={ox,oy,sc,dpr};
   ctx.imageSmoothingEnabled=true; ctx.drawImage(mapCache,ox,oy,side,side);
   ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=1*dpr; ctx.fillStyle='#9aa1b0'; ctx.font=(11*dpr)+'px sans-serif';
-  for(let g=0; g<=CFG.SIZE; g+=32){const p=g*sc;
+  for(let g=0; g<=CFG.SIZE; g+=32*CFG.SIZE/256){const p=g*sc;
     ctx.beginPath(); ctx.moveTo(ox+p,oy); ctx.lineTo(ox+p,oy+side); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(ox,oy+p); ctx.lineTo(ox+side,oy+p); ctx.stroke();
     ctx.textAlign='center'; ctx.fillText(g+'',ox+p,oy-8*dpr);
@@ -220,10 +232,11 @@ function draw2D(){
   ctx.strokeStyle='#555b68'; ctx.lineWidth=1.5*dpr; ctx.strokeRect(ox,oy,side,side);
   drawScene2D(ctx);
   drawCastleOverlay(ctx);
-  const bx=ox+side-50*sc-10*dpr, by=oy+side-14*dpr;
-  ctx.fillStyle='rgba(20,22,26,0.75)'; ctx.fillRect(bx-8*dpr,by-18*dpr,50*sc+16*dpr,26*dpr);
-  ctx.strokeStyle='#fff'; ctx.lineWidth=2*dpr; ctx.beginPath(); ctx.moveTo(bx,by); ctx.lineTo(bx+50*sc,by); ctx.moveTo(bx,by-4*dpr); ctx.lineTo(bx,by+3*dpr); ctx.moveTo(bx+50*sc,by-4*dpr); ctx.lineTo(bx+50*sc,by+3*dpr); ctx.stroke();
-  ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.font=(11*dpr)+'px sans-serif'; ctx.fillText('50 米',bx+25*sc,by-6*dpr);
+  const SB=50*CFG.SIZE/256;
+  const bx=ox+side-SB*sc-10*dpr, by=oy+side-14*dpr;
+  ctx.fillStyle='rgba(20,22,26,0.75)'; ctx.fillRect(bx-8*dpr,by-18*dpr,SB*sc+16*dpr,26*dpr);
+  ctx.strokeStyle='#fff'; ctx.lineWidth=2*dpr; ctx.beginPath(); ctx.moveTo(bx,by); ctx.lineTo(bx+SB*sc,by); ctx.moveTo(bx,by-4*dpr); ctx.lineTo(bx,by+3*dpr); ctx.moveTo(bx+SB*sc,by-4*dpr); ctx.lineTo(bx+SB*sc,by+3*dpr); ctx.stroke();
+  ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.font=(11*dpr)+'px sans-serif'; ctx.fillText(SB+' 米',bx+SB/2*sc,by-6*dpr);
   const nx=ox+side-18*dpr, ny=oy+22*dpr;
   ctx.fillStyle='rgba(20,22,26,0.75)'; ctx.beginPath(); ctx.arc(nx,ny,14*dpr,0,7); ctx.fill();
   ctx.fillStyle='#e8c070'; ctx.beginPath(); ctx.moveTo(nx,ny-10*dpr); ctx.lineTo(nx-5*dpr,ny+4*dpr); ctx.lineTo(nx+5*dpr,ny+4*dpr); ctx.fill();
@@ -242,7 +255,7 @@ C2.addEventListener('mousemove',ev=>{
 });
 
 // ===== 3D 视角（原生 WebGL，无外部库）=====
-let gl=null, prog=null, loc={}, vbo=null, ibo=null, idxCount=0;
+let gl=null, prog=null, loc={}, vbo=null, ibo=null, idxCount=0, idxExt=null, idxType=0;
 let lprog=null, lloc={}, ovbo=null, ovCount=0; S.overlay3d=true;   // 3D 叠加层：城墙、城镇范围、城堡标杆
 const cam={yaw:-0.75, pitch:0.55, dist:340, target:[CFG.SIZE/2,6,CFG.SIZE/2]};
 function init3D(){
@@ -250,18 +263,16 @@ function init3D(){
   if(!gl){S.errors.push('浏览器不支持 WebGL，3D 视角不可用');return;}
   const vs=`attribute vec3 aPos;attribute vec3 aNrm;attribute vec3 aCol;uniform mat4 uMVP;varying vec3 vN;varying vec3 vC;varying vec3 vP;
     void main(){vN=aNrm;vC=aCol;vP=aPos;gl_Position=uMVP*vec4(aPos,1.0);}`;
-  const fs=`precision mediump float;varying vec3 vN;varying vec3 vC;varying vec3 vP;uniform vec3 uSun;uniform vec3 uEye;uniform float uGrid;
+  const fs=`precision mediump float;varying vec3 vN;varying vec3 vC;varying vec3 vP;uniform vec3 uSun;uniform vec3 uEye;uniform float uGrid;uniform float uK;
     void main(){vec3 n=normalize(vN);float d=max(dot(n,uSun),0.0);vec3 col=vC*(0.42+0.72*d);
       vec2 g=abs(fract(vP.xz/32.0+0.5)-0.5)*32.0;float line=1.0-smoothstep(0.0,0.35,min(g.x,g.y));col=mix(col,col*0.72,line*0.6*uGrid);
-      float dist=length(vP-uEye);float fog=clamp((dist-220.0)/600.0,0.0,0.55);col=mix(col,vec3(0.66,0.74,0.84),fog);
+      float dist=length(vP-uEye);float fog=clamp((dist-220.0*uK)/(600.0*uK),0.0,0.55);col=mix(col,vec3(0.66,0.74,0.84),fog);
       gl_FragColor=vec4(col,1.0);}`;
   function sh(t,src){const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))S.errors.push('着色器编译失败: '+gl.getShaderInfoLog(s));return s;}
   prog=gl.createProgram();gl.attachShader(prog,sh(gl.VERTEX_SHADER,vs));gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,fs));gl.linkProgram(prog);
   if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) S.errors.push('着色器链接失败: '+gl.getProgramInfoLog(prog));
-  loc={aPos:gl.getAttribLocation(prog,'aPos'),aNrm:gl.getAttribLocation(prog,'aNrm'),aCol:gl.getAttribLocation(prog,'aCol'),uMVP:gl.getUniformLocation(prog,'uMVP'),uSun:gl.getUniformLocation(prog,'uSun'),uEye:gl.getUniformLocation(prog,'uEye'),uGrid:gl.getUniformLocation(prog,'uGrid')};
-  const N=CFG.N, idx=new Uint16Array((N-1)*(N-1)*6); let k=0;
-  for(let j=0;j<N-1;j++)for(let i=0;i<N-1;i++){const a=j*N+i,b=a+1,c=a+N,d=c+1;idx[k++]=a;idx[k++]=c;idx[k++]=b;idx[k++]=b;idx[k++]=c;idx[k++]=d;}
-  idxCount=k; ibo=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idx,gl.STATIC_DRAW);
+  loc={aPos:gl.getAttribLocation(prog,'aPos'),aNrm:gl.getAttribLocation(prog,'aNrm'),aCol:gl.getAttribLocation(prog,'aCol'),uMVP:gl.getUniformLocation(prog,'uMVP'),uSun:gl.getUniformLocation(prog,'uSun'),uEye:gl.getUniformLocation(prog,'uEye'),uGrid:gl.getUniformLocation(prog,'uGrid'),uK:gl.getUniformLocation(prog,'uK')};
+  idxExt=gl.getExtension('OES_element_index_uint'); ibo=gl.createBuffer(); buildIndex();
   const lvs=`attribute vec3 aPos;attribute vec4 aCol;uniform mat4 uMVP;varying vec4 vC;void main(){vC=aCol;gl_Position=uMVP*vec4(aPos,1.0);}`;
   const lfs=`precision mediump float;varying vec4 vC;void main(){gl_FragColor=vC;}`;
   lprog=gl.createProgram();gl.attachShader(lprog,sh(gl.VERTEX_SHADER,lvs));gl.attachShader(lprog,sh(gl.FRAGMENT_SHADER,lfs));gl.linkProgram(lprog);
@@ -270,6 +281,11 @@ function init3D(){
   ovbo=gl.createBuffer(); obo=gl.createBuffer();
   vbo=gl.createBuffer(); S.webgl=true;
 }
+function buildIndex(){ // 地形网格的三角形索引；大地块顶点超过 65535 个时用 32 位索引
+  const N=CFG.N, big=N*N>65535; if(big&&!idxExt&&!S.errors.includes('显卡不支持大地块')) S.errors.push('显卡不支持大地块');
+  const idx=big?new Uint32Array((N-1)*(N-1)*6):new Uint16Array((N-1)*(N-1)*6); let k=0;
+  for(let j=0;j<N-1;j++)for(let i=0;i<N-1;i++){const a=j*N+i,b=a+1,c=a+N,d=c+1;idx[k++]=a;idx[k++]=c;idx[k++]=b;idx[k++]=b;idx[k++]=c;idx[k++]=d;}
+  idxCount=k; idxType=big?gl.UNSIGNED_INT:gl.UNSIGNED_SHORT; gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idx,gl.STATIC_DRAW);}
 function hexCol(h,a){return [parseInt(h.slice(1,3),16)/255,parseInt(h.slice(3,5),16)/255,parseInt(h.slice(5,7),16)/255,a];}
 function pushRibbon(out,cx,cz,r,w,col,a0,a1,lift){ // 贴地的圆环带（角度 a0 到 a1），超出地块的部分不画
   const seg=Math.max(2,Math.ceil((a1-a0)*r));
@@ -301,9 +317,10 @@ function sceneCtx(){return {heightAt,riverDist,isWater,SIZE:CFG.SIZE,BED:CFG.RIV
 function buildScene(){ // 先恢复原始地形，再生成场景（场景会修正地形），最后按硬规则自检
   if(S.baseHeights) S.heights.set(S.baseHeights);
   if(!window.SCENE){if(!S.errors.includes('场景模块没有加载'))S.errors.push('场景模块没有加载');build3D();return;}
-  const t0=performance.now(),cx=sceneCtx(); S.scene=SCENE.build(cx); S.audit=SCENE.audit(S.scene,cx);
+  const t0=performance.now(),cx=sceneCtx(); S.scene=SCENE.build(cx); const t1=performance.now(); S.audit=SCENE.audit(S.scene,cx); const t2=performance.now();
   const N=CFG.N,c=CFG.SIZE/(N-1);let cut=0,fill=0;for(let k=0;k<N*N;k++){const d=S.heights[k]-S.baseHeights[k];if(d<0)cut-=d;else fill+=d;}
-  S.earth={cut:cut*c*c,fill:fill*c*c}; S.sceneMs=performance.now()-t0; build3D(); build3DObjects();}
+  S.earth={cut:cut*c*c,fill:fill*c*c}; S.sceneMs=t2-t0; build3D(); const t3=performance.now(); build3DObjects(); const t4=performance.now();
+  S.timing=Object.assign(S.timing||{},{build:t1-t0,stages:S.scene.timing,audit:t2-t1,mesh:t3-t2,objects:t4-t3});}
 let obo=null, objCount=0;
 const C01=c=>[c[0]/255,c[1]/255,c[2]/255];
 function build3DObjects(){ if(!gl||!S.scene) return; const out=[], sn=S.scene, K=SCENE.COL, RED=C01(K.bad);
@@ -351,12 +368,12 @@ function render3D(){
   gl.viewport(0,0,C3.width,C3.height); gl.clearColor(0.66,0.74,0.84,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST);
   gl.useProgram(prog); const e=eyePos(), mvp=mul(persp(0.9,C3.width/C3.height,1,3000),lookAt(e,cam.target,[0,1,0])), mvpF=new Float32Array(mvp);
   gl.uniformMatrix4fv(loc.uMVP,false,mvpF);
-  const s=[-0.5,0.7,-0.45],l=Math.hypot(...s); gl.uniform3f(loc.uSun,s[0]/l,s[1]/l,s[2]/l); gl.uniform3f(loc.uEye,e[0],e[1],e[2]); gl.uniform1f(loc.uGrid,1);
+  const s=[-0.5,0.7,-0.45],l=Math.hypot(...s); gl.uniform3f(loc.uSun,s[0]/l,s[1]/l,s[2]/l); gl.uniform3f(loc.uEye,e[0],e[1],e[2]); gl.uniform1f(loc.uGrid,1); gl.uniform1f(loc.uK,CFG.SIZE/256);
   gl.bindBuffer(gl.ARRAY_BUFFER,vbo);
   gl.enableVertexAttribArray(loc.aPos);gl.vertexAttribPointer(loc.aPos,3,gl.FLOAT,false,36,0);
   gl.enableVertexAttribArray(loc.aNrm);gl.vertexAttribPointer(loc.aNrm,3,gl.FLOAT,false,36,12);
   gl.enableVertexAttribArray(loc.aCol);gl.vertexAttribPointer(loc.aCol,3,gl.FLOAT,false,36,24);
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo); gl.drawElements(gl.TRIANGLES,idxCount,gl.UNSIGNED_SHORT,0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo); gl.drawElements(gl.TRIANGLES,idxCount,idxType,0);
   if(objCount){gl.uniform1f(loc.uGrid,0); gl.bindBuffer(gl.ARRAY_BUFFER,obo);
     gl.vertexAttribPointer(loc.aPos,3,gl.FLOAT,false,36,0);gl.vertexAttribPointer(loc.aNrm,3,gl.FLOAT,false,36,12);gl.vertexAttribPointer(loc.aCol,3,gl.FLOAT,false,36,24);
     gl.drawArrays(gl.TRIANGLES,0,objCount); gl.uniform1f(loc.uGrid,1);}
@@ -393,7 +410,7 @@ function setParams(o){Object.assign(P,o); clampCastle(); generate();}
 function resetCastle(){O.castle=null; buildScene(); syncPanel(); refresh(); writeHash();}
 function syncPanel(){
   $('seed').value=P.seed; $('relief').value=P.relief; $('vRelief').textContent=Number(P.relief).toFixed(1);
-  $('river').checked=P.river; $('town').value=P.town; $('walls').value=String(P.walls);
+  $('river').checked=P.river; $('town').value=P.town; $('walls').value=String(P.walls); $('size').value=String(P.size);
   const m=$('cmode'); m.textContent=O.castle?'手动（已覆盖自动结果）':'自动'; m.className=O.castle?'manual':''; $('cauto').disabled=!O.castle;}
 let flashT=0; function flash(t){S.flash=t;clearTimeout(flashT);refresh();flashT=setTimeout(()=>{S.flash='';refresh();},1800);}
 function refresh(){ if(!S.heights) return;
@@ -405,12 +422,13 @@ function refresh(){ if(!S.heights) return;
     +'<br>房屋 '+(S.scene?S.scene.boxes.filter(b=>b.kind==='house').length:0)+' · 道路 '+(S.scene?S.scene.roads.length:0)+' 条 · 角色 '+(S.scene?S.scene.people.length:0)
     +(S.earth?'<br>土方 挖 '+Math.round(S.earth.cut)+' · 填 '+Math.round(S.earth.fill)+' 立方米':'')
     +(S.scene&&S.scene.grade?'<br>路面坡度 修正前平均 '+(S.scene.grade.baseMean*100).toFixed(0)+'% → 修正后 '+(S.scene.grade.mean*100).toFixed(0)+'%（'+Math.round(S.scene.grade.okFrac*100)+'% 路段不超过 12%）':'')
-    +'<br><span style="color:#8a909c">主体雏形 v0.6：分布随地形调整，城镇会修正地形</span>';
+    +(S.timing?'<br>生成耗时 '+Math.round(['terrain','water','site','build','audit','mesh','objects','map'].reduce((a,k)=>a+(S.timing[k]||0),0))+' 毫秒（场景 '+Math.round(S.timing.build||0)+'）':'')
+    +'<br><span style="color:#8a909c">主体雏形 v0.7：房屋增多，可放大地块（256/512/1024 米）</span>';
   if(S.audit) $('rules').innerHTML=SCENE.RULES.hard.map(r=>{const n=S.audit.cnt[r.id];return '<div class="'+(n?'ng':'ok')+'">'+(n?'✗ ':'✓ ')+r.name+(n?' ×'+n:'')+'</div>';}).join('');
   if(S.mode==='3d') $('probe').innerHTML='左键拖动：旋转<br>右键 / Shift+拖动：平移<br>滚轮：缩放'; else if(!/^X /.test($('probe').innerHTML)) $('probe').innerHTML='移动鼠标到地形上查看坐标';
   $('status').textContent=S.flash||(S.errors.length?('⚠ '+S.errors[0]):(S.audit&&S.audit.total?('⚠ 硬规则有 '+S.audit.total+' 处违反（已标红）'):'就绪'));
 }
-function writeHash(){const q=new URLSearchParams();q.set('seed',P.seed);q.set('relief',P.relief);q.set('river',P.river?1:0);q.set('town',P.town);q.set('walls',P.walls);
+function writeHash(){const q=new URLSearchParams();q.set('seed',P.seed);q.set('relief',P.relief);q.set('river',P.river?1:0);q.set('town',P.town);q.set('walls',P.walls);q.set('size',P.size);
   if(O.castle){q.set('cx',O.castle.x.toFixed(1));q.set('cz',O.castle.z.toFixed(1));} q.set('mode',S.mode);
   const u=location.href.split('#')[0]+'#'+q.toString(); try{history.replaceState(null,'',u);}catch(e){} }
 function readHash(){const q=new URLSearchParams(location.hash.slice(1));
@@ -419,6 +437,7 @@ function readHash(){const q=new URLSearchParams(location.hash.slice(1));
   if(q.has('river')) P.river=q.get('river')!=='0';
   if(TOWN[q.get('town')]) P.town=q.get('town');
   const w=Number(q.get('walls')); if(w>=1&&w<=3) P.walls=w;
+  const sz=Number(q.get('size')); if([256,512,1024].includes(sz)) P.size=sz;
   if(q.has('cx')&&q.has('cz')) O.castle={x:Number(q.get('cx')),z:Number(q.get('cz'))};
   S.mode=q.get('mode')==='3d'?'3d':'2d';}
 $('gen').onclick=()=>generate($('seed').value);
@@ -430,6 +449,7 @@ $('relief').addEventListener('change',e=>setParams({relief:Number(e.target.value
 $('river').onchange=e=>setParams({river:e.target.checked});
 $('town').onchange=e=>setParams({town:e.target.value});
 $('walls').onchange=e=>setParams({walls:Number(e.target.value)});
+$('size').onchange=e=>setParams({size:Number(e.target.value)});
 $('cauto').onclick=resetCastle;
 $('earth').onclick=()=>{S.showEarth=!S.showEarth;$('earth').textContent=S.showEarth?'隐藏挖填方':'显示挖填方';build3D();refresh();};
 $('copy').onclick=()=>{if(navigator.clipboard)navigator.clipboard.writeText(location.href).then(()=>flash('链接已复制'),()=>flash('复制失败，请直接复制地址栏'));else flash('请直接复制地址栏');};
@@ -440,6 +460,8 @@ window.sim={generate,setMode,heightAt,setParams,castle,riverDist,isWater,resetCa
   setOverlay3D:b=>{S.overlay3d=!!b;refresh();}, overlayCount:()=>ovCount,
   scene:()=>{const s=S.scene;if(!s)return null;const n=k=>s.boxes.filter(b=>b.kind===k).length;return {houses:n('house'),walls:n('wall'),towers:n('tower'),keep:n('keep'),roads:s.roads.length,bridges:s.roads.filter(r=>r.deck.some(d=>d!==null)).length,people:s.people.length,fields:s.fields.length,gate:s.gate};},
   audit:()=>S.audit, sceneMs:()=>S.sceneMs, earth:()=>S.earth, baseAt,
+  timing:()=>S.timing, stats:()=>({size:CFG.SIZE,terrainVerts:CFG.N*CFG.N,objTris:objCount/3}),
+  soft:()=>({...SCENE.RULES.soft}), setSoft:o=>{Object.assign(SCENE.RULES.soft,o);buildScene();refresh();},
   grade:()=>S.scene&&S.scene.grade, ringStd:()=>S.scene?S.scene.ringStd:null,
   flat:()=>S.scene.boxes.filter(b=>b.kind==='house').map(b=>{const f=SCENE.footprint(b).map(p=>heightAt(p[0],p[1]));return Math.max(...f)-Math.min(...f);}),
   flatBase:()=>S.scene.boxes.filter(b=>b.kind==='house').map(b=>{const f=SCENE.footprint(b).map(p=>baseAt(p[0],p[1]));return Math.max(...f)-Math.min(...f);}),
