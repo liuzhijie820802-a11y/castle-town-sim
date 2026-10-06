@@ -1,4 +1,4 @@
-import sys, os, json
+import sys, os, json, time
 from playwright.sync_api import sync_playwright
 # 用法: python3 tests/test_preview.py [页面网址]，默认测试本地 index.html
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -53,7 +53,7 @@ with sync_playwright() as p:
     pg.evaluate("sim.setParams({relief:1.3,river:false,town:'s',walls:1})")
     href = pg.evaluate("location.href"); hs = pg.evaluate(H3); kc = pg.evaluate("sim.castle()")
     pg.goto("about:blank"); pg.goto(href); pg.wait_for_timeout(800)
-    same = pg.evaluate("sim.params()") == {"seed":20261005,"relief":1.3,"river":False,"town":"s","walls":1,"size":256} and pg.evaluate(H3) == hs and pg.evaluate("sim.castle()") == kc
+    same = pg.evaluate("sim.params()") == {"seed":20261005,"relief":1.3,"river":False,"town":"s","walls":1,"size":256,"tg":"A"} and pg.evaluate(H3) == hs and pg.evaluate("sim.castle()") == kc
     check("网址可复现全部参数", same, href.split("#")[1])
 
     # ===== 人工覆盖：拖动城堡 =====
@@ -85,8 +85,8 @@ with sync_playwright() as p:
     print("  （生成整个场景耗时 %.0f 毫秒）" % pg.evaluate("sim.sceneMs()"))
     rp = pg.evaluate("""()=>{for(let z=60;z<=196;z+=4)for(let x=30;x<=226;x+=2)if(sim.riverDist(x,z)<1)return [x,z];return null}""")
     pg.evaluate(f"sim.setCastle({rp[0]},{rp[1]})")
-    au2 = pg.evaluate("sim.audit()")
-    check("城堡拖进河里时，系统自己报出违反", au2["cnt"]["H2"]>0 and "⚠" in pg.inner_text("#status") and "✗" in pg.inner_text("#rules"), f'H2={au2["cnt"]["H2"]}，状态栏：{pg.inner_text("#status")}')
+    k5 = pg.evaluate("sim.castle()"); au2 = pg.evaluate("sim.audit()"); d5 = ((k5["x"]-rp[0])**2+(k5["z"]-rp[1])**2)**0.5
+    check("城堡拖进河里时，自动滑到最近的合法位置（不压河道）", not k5["inWater"] and au2["cnt"]["H2"]==0 and "避开河道" in pg.inner_text("#cmode") and d5 < 60, f'从 ({rp[0]},{rp[1]}) 移到 ({k5["x"]:.0f},{k5["z"]:.0f})，移动 {d5:.0f} 米，压河道 {au2["cnt"]["H2"]} 处')
     shot(pg, "shot_scene_bad.png")
     pg.evaluate("sim.resetCastle()")
     check("恢复自动选址后重新全部满足", pg.evaluate("sim.audit().total")==0)
@@ -114,6 +114,16 @@ with sync_playwright() as p:
     pg.evaluate("sim.resetCastle()")
     pg.evaluate("sim.setShowEarth(true)"); pg.wait_for_timeout(200); shot(pg, "shot_earth2d.png"); pg.evaluate("sim.setShowEarth(false)")
     shot(pg, "shot_scene2d.png")
+    badm = pg.evaluate("""()=>{const b=[];for(const tg of ['B','C']){sim.setParams({tg});for(let s=1;s<=10;s++){sim.generate(s);const a=sim.audit(),sc=sim.scene();if(a.total||sc.houses<10)b.push(tg+s+':'+sc.houses+JSON.stringify(a.cnt)+JSON.stringify(a.items.slice(0,2)));}}sim.setParams({tg:'A'});sim.generate(20261005);return b}""")
+    check("城镇生长方式 B、C 也满足全部硬规则（各 10 个种子）", not badm, "; ".join(badm)[:400])
+    # 大地块拖动：只更新骨架，松手后才完整生成
+    pg.evaluate("sim.setParams({size:1024})"); pg.wait_for_timeout(300)
+    k = pg.evaluate("sim.castle()"); c0 = pg.evaluate("sim.buildCount()")
+    a = pg.evaluate(f'sim.toScreen({k["x"]},{k["z"]})'); t = pg.evaluate(f'sim.toScreen({k["x"]+60},{k["z"]})')
+    pg.mouse.move(a["x"], a["y"]); pg.mouse.down(); t0 = time.time(); pg.mouse.move(t["x"], t["y"], steps=10); pg.wait_for_timeout(100); dt = time.time()-t0
+    mid = pg.evaluate("[sim.buildCount(),sim.preview()]"); pg.mouse.up(); pg.wait_for_timeout(200); c1 = pg.evaluate("sim.buildCount()")
+    check("1024 米拖动城堡时只动骨架、松手后才完整生成", mid[0]==c0 and mid[1] and c1==c0+1 and dt < 2.5, f"拖动 10 步用时 {dt:.2f} 秒，拖动中重建 {mid[0]-c0} 次，松手后 {c1-c0} 次")
+    pg.evaluate("sim.resetCastle()"); pg.evaluate("sim.setParams({size:256})")
 
     # ===== 3D =====
     pg.click("#m3d"); pg.wait_for_timeout(800)
