@@ -53,7 +53,7 @@ with sync_playwright() as p:
     pg.evaluate("sim.setParams({relief:1.3,river:false,town:'s',walls:1})")
     href = pg.evaluate("location.href"); hs = pg.evaluate(H3); kc = pg.evaluate("sim.castle()")
     pg.goto("about:blank"); pg.goto(href); pg.wait_for_timeout(800)
-    same = pg.evaluate("sim.params()") == {"seed":20261005,"relief":1.3,"river":False,"town":"s","walls":1} and pg.evaluate(H3) == hs and pg.evaluate("sim.castle()") == kc
+    same = pg.evaluate("sim.params()") == {"seed":20261005,"relief":1.3,"river":False,"town":"s","walls":1,"size":256} and pg.evaluate(H3) == hs and pg.evaluate("sim.castle()") == kc
     check("网址可复现全部参数", same, href.split("#")[1])
 
     # ===== 人工覆盖：拖动城堡 =====
