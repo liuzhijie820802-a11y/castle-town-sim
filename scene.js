@@ -153,13 +153,15 @@ function build(ctx){
   const nearRP=(x,z,lim)=>{let best=null,bd=lim;const gx=Math.floor(x/6),gz=Math.floor(z/6),R=Math.ceil(lim/6);
     for(let dx=-R;dx<=R;dx++)for(let dz=-R;dz<=R;dz++){const L=RP.get((gx+dx)+','+(gz+dz));if(L)for(const q of L){const d=Math.hypot(q.x-x,q.z-z);if(d<bd){bd=d;best=q;}}}return best;};
   const lineDa=(a,b)=>{const d=Math.abs(angDiff(a,b));return Math.min(d,Math.PI-d);};
-  const canCross=(x,z,a)=>{if(!riverX)return false;let wet=false,m=null;
+  const canCross=(x,z,a)=>{if(!riverX)return false;let wet=false,m=null,m0=null;
+    const steep=zz=>{const tx=(riverX(zz+1)-riverX(zz-1))/2;return Math.abs((Math.cos(a)*tx+Math.sin(a))/Math.hypot(tx,1))>0.65;}; // 河道弯曲时，桥中点和对岸桥头都要与河道夹角≥49°（比检测线 45° 留 4° 余量，抵消逐步微小偏转和桥头平滑）
     for(let t=1;t<=45;t++){const px=x+Math.cos(a)*t,pz=z+Math.sin(a)*t,w=riverDist(px,pz)<BED+1.5;
-      if(w&&!wet){wet=true;}if(wet&&w)m=[px,pz];
+      if(w&&!wet){wet=true;m0=[px,pz];}if(wet&&w)m=[px,pz];
       if(wet&&!w){if(!inMap(px,pz,2)||Math.sign(px-riverX(pz))===Math.sign(x-riverX(z)))return false;
-        const tx=(riverX(m[1]+1)-riverX(m[1]-1))/2;if(Math.abs((Math.cos(a)*tx+Math.sin(a))/Math.hypot(tx,1))>0.71)return false;
+        if(steep(m[1])||steep((m0[1]+m[1])/2))return false;
         if(S.bridgeSpots.some(b=>Math.hypot(b[0]-m[0],b[1]-m[1])<30))return false;return m;}}return false;};
   function makeRoad(x,z,a,len,w,main,tgt,stopAtCross){const pts=[[x,z]];let a0=a,s=0; // tgt：有目标点时每一步都朝目标修正方向
+    if(!main&&riverDist(x,z)<BED+1.5)return {pts,w,main:false,ring:false,deck:[null]}; // 只有主路能架桥：起点落在河道里的支路不建
     while(s<len){if(tgt){if(Math.hypot(tgt[0]-x,tgt[1]-z)<3)break;a0=Math.atan2(tgt[1]-z,tgt[0]-x);a+=clamp(angDiff(a0,a),-0.4,0.4);}
       let pick=null,bs=1e9;const inWater=riverDist(x,z)<BED+1.5;
       for(const da of inWater?[0]:[-0.4,-0.2,0,0.2,0.4]){const na=a+da+(rnd()-0.5)*0.06;if(Math.abs(angDiff(na,a0))>1.3)continue;
@@ -249,7 +251,7 @@ function build(ctx){
   }
   lap('路网');
   // 线形平滑：去掉逐步转向留下的折线（两端不动）
-  for(const r of S.roads){const p=r.pts;for(let it=0;it<3;it++){const q=p.map(v=>v.slice());for(let i=1;i<p.length-1;i++){q[i][0]=(p[i-1][0]+p[i][0]*2+p[i+1][0])/4;q[i][1]=(p[i-1][1]+p[i][1]*2+p[i+1][1])/4;}for(let i=1;i<p.length-1;i++){p[i][0]=q[i][0];p[i][1]=q[i][1];}}}
+  for(const r of S.roads){const p=r.pts,wt=p.map(q=>riverDist(q[0],q[1])<BED+1.5);for(let it=0;it<3;it++){const q=p.map(v=>v.slice());for(let i=1;i<p.length-1;i++){q[i][0]=(p[i-1][0]+p[i][0]*2+p[i+1][0])/4;q[i][1]=(p[i-1][1]+p[i][1]*2+p[i+1][1])/4;}for(let i=1;i<p.length-1;i++)if(!wt[i]){p[i][0]=q[i][0];p[i][1]=q[i][1];}}} // 桥段（河道内的点）不参与平滑，保持直线
   // 路基：纵断面平滑并限坡，再整平路面、两侧放坡；桥段按两岸高度架设
   for(const r of S.roads){const p=r.pts,n=p.length,g=p.map(q=>heightAt(q[0],q[1])),wt=p.map(q=>riverDist(q[0],q[1])<BED+1.5);
     for(let i=0;i<n;i++)if(wt[i]){let j=i;while(j+1<n&&wt[j+1])j++;const a=i>0?g[i-1]:(j+1<n?g[j+1]:0),b=j+1<n?g[j+1]:a;for(let k=i;k<=j;k++)g[k]=a+(b-a)*(k-i+1)/(j-i+2);i=j;}
