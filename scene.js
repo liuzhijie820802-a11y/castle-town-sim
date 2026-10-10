@@ -221,7 +221,13 @@ function build(ctx){
   }
   S.T=T;
   { const touch=(q,k)=>S.roads.some((r,j)=>j!==k&&roadDist(r,q[0],q[1])<r.w/2+2);
-    S.roads=S.roads.filter((r,k)=>{const n=r.pts.length;return r.main||(n-1)*2>=14||(touch(r.pts[0],k)&&touch(r.pts[n-1],k));}); }
+    S.roads=S.roads.filter((r,k)=>{const n=r.pts.length;return r.main||(n-1)*2>=14||(touch(r.pts[0],k)&&touch(r.pts[n-1],k));});
+    // 不到 14 米的小巷：如果两头接的路本来就连着（同一条路或彼此相交），它只是把路口打成结，删掉；真正起连接作用的保留
+    const near=(a,b)=>a.pts.some(q=>roadDist(b,q[0],q[1])<b.w/2+2);
+    for(let k=S.roads.length-1;k>=0;k--){const r=S.roads[k],n=r.pts.length;if(r.main||r.ring||(n-1)*2>=14)continue;
+      const A=S.roads.filter((o,j)=>j!==k&&roadDist(o,r.pts[0][0],r.pts[0][1])<o.w/2+2),B=S.roads.filter((o,j)=>j!==k&&roadDist(o,r.pts[n-1][0],r.pts[n-1][1])<o.w/2+2);
+      if(A.some(a=>B.includes(a)||B.some(b=>near(a,b))))S.roads.splice(k,1);}
+    S.roads=S.roads.filter((r,k)=>{const n=r.pts.length;return r.main||(n-1)*2>=14||(touch(r.pts[0],k)&&touch(r.pts[n-1],k));}); } // 删结后可能留下悬空的短断头，再清一遍
   { // 连不上城门路网的路段：25 米内能直连（不过河）就补一条短连接路，连不上就删掉，避免孤立街区
     const N=S.roads.length,par=[...Array(N).keys()],f=i=>par[i]===i?i:(par[i]=f(par[i])),G=new Map();
     S.roads.forEach((r,i)=>{for(const q of r.pts){const k=Math.floor(q[0]/4)+','+Math.floor(q[1]/4);let a=G.get(k);if(!a)G.set(k,a=[]);a.push([i,q]);}});
@@ -261,12 +267,13 @@ function build(ctx){
   //    按“土方少、离城堡近、离河远”打分，好地先建，每块地只建一栋，建一栋平整一块地基
   const sp=RULES.soft.houseSpacing,target=Math.round(0.013*(K.townR*K.townR-K.r*K.r)),cands=[],RJ={far:0,square:0,map:0,wet:0,steep:0,road:0,overlap:0};S.rejects=RJ;
   let slotId=0,ri=-1;
+  const hr=(x,z,k)=>{let h=Math.imul(Math.round(x*2)|0,374761393)^Math.imul(Math.round(z*2)|0,668265263)^Math.imul((ctx.seed^(k*2654435761))|0,-2048144789);h=Math.imul(h^(h>>>13),1274126177);h^=h>>>16;return (h>>>0)/4294967296;}; // 按位置取的随机数
   const tnorm=(x,z)=>{if(mode==='A'){const dc=Math.hypot(x-K.x,z-K.z);return {far:dc>K.townR*1.3,n:(dc-S.rOut)/(K.townR-S.rOut+10)};}
     let n=1e9,far=true;for(const c of S.centers){const d=Math.hypot(x-c.x,z-c.z);if(d<=c.R*1.4)far=false;n=Math.min(n,d/(c.R+10));}return {far,n};};
   for(const r of S.roads){ri++;let acc=0;const p=r.pts;
     for(let i=1;i<p.length;i++){acc+=2;if(acc<sp)continue;acc=0;if(r.deck[i]!==null)continue;
       const yaw=Math.atan2(p[i][1]-p[i-1][1],p[i][0]-p[i-1][0]),nx=-Math.sin(yaw),nz=Math.cos(yaw);
-      for(const side of [-1,1])for(const row of [0,1,2]){const slot=slotId++,W=6+rnd()*3,D=5+rnd()*2,h=3.5+rnd()*3.5,jit=rnd();
+      for(const side of [-1,1])for(const row of [0,1,2]){const slot=slotId++,hk=side*11+row*3,W=6+hr(p[i][0],p[i][1],hk)*3,D=5+hr(p[i][0],p[i][1],hk+1)*2,h=3.5+hr(p[i][0],p[i][1],hk+2)*3.5,jit=hr(p[i][0],p[i][1],hk+3);
         for(const [k,push] of [[1,0],[1,1.5],[0.8,0],[0.8,1.5],[0.8,3],[0.65,0.5],[0.65,2]]){
           const w=Math.max(4.5,W*k),d=Math.max(4,D*k),off=r.w/2+1.6+push+row*(D+2)+d/2;
           const b={kind:'house',x:p[i][0]+nx*side*off,z:p[i][1]+nz*side*off,w,d,yaw,row,ri},dc=Math.hypot(b.x-K.x,b.z-K.z),tn=tnorm(b.x,b.z);
@@ -286,8 +293,11 @@ function build(ctx){
   for(const c of cands){if(built>=target)break;if(used.has(c.slot))continue;const b=c.b;
     if(footprint(b).some(q=>nearRoad(q[0],q[1],0.6))){RJ.road++;continue;}
     if(hitsBox(b,0.8)){RJ.overlap++;continue;}
-    const lo=gmin(b),hi=gmax(b),y=b.row?gmean(b):heightAt(b.sx,b.sz); // 临街房地基与街面同高；后排房取地块平均高度
-    ed.rect(b,y,1.5,2+1.5*(hi-lo));
+    const lo=gmin(b),hi=gmax(b);let y=b.row?gmean(b):heightAt(b.sx,b.sz); // 临街房地基与街面同高；后排房取地块平均高度
+    { // 地基冲突：占地里已有别的房屋或道路整平过的格点时，地基高度跟它们对齐；已整平的格点高差超过 0.5 米说明这块地夹在两个平台之间，放弃
+      const lk=footprint(b).filter(q=>ed.locked(q[0],q[1])).map(q=>heightAt(q[0],q[1]));
+      if(lk.length){if(Math.max(...lk)-Math.min(...lk)>0.5){RJ.steep++;continue;}y=lk.reduce((u,v)=>u+v,0)/lk.length;} }
+    ed.rect(b,y,2,2+1.5*(hi-lo));
     b.y1=y+c.h;b.h=c.h;b.cut=Math.max(0,hi-y);b.fill=Math.max(0,y-lo);delete b.sx;delete b.sz;add(b);built++;used.add(c.slot);}
   S.houseCands=cands.length;S.houseTarget=target;
   lap('房屋落位');
@@ -355,7 +365,7 @@ function build(ctx){
   const SG=new Map();segs.forEach((g,k)=>{const kk=Math.floor((g.a[0]+g.b[0])/16)+','+Math.floor((g.a[1]+g.b[1])/16);let a=SG.get(kk);if(!a)SG.set(kk,a=[]);a.push(k);});
   const lineD=(a,b)=>{const d=Math.abs(angDiff(a,b));return Math.min(d,Math.PI-d);};
   const cross=(g,t)=>{const c=(p,q,r)=>(q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]);return c(g.a,g.b,t.a)*c(g.a,g.b,t.b)<0&&c(t.a,t.b,g.a)*c(t.a,t.b,g.b)<0;};
-  const parl=new Map(),q4=new Set();
+  const parl=new Map(),q4=new Set(),q4raw=[];
   segs.forEach((g,k)=>{const mx=(g.a[0]+g.b[0])/2,mz=(g.a[1]+g.b[1])/2,gx=Math.floor(mx/8),gz=Math.floor(mz/8);
     for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++){const L=SG.get((gx+dx)+','+(gz+dz));if(!L)continue;for(const k2 of L){if(k2<=k)continue;const t=segs[k2];if(t.r===g.r)continue;
       const tx=(t.a[0]+t.b[0])/2,tz=(t.a[1]+t.b[1])/2,d=Math.min(segDist(mx,mz,t.a[0],t.a[1],t.b[0],t.b[1]),segDist(tx,tz,g.a[0],g.a[1],g.b[0],g.b[1])),ld=lineD(g.ang,t.ang);
@@ -363,7 +373,10 @@ function build(ctx){
       if(d<(g.w+t.w)/2+2.5&&ld<0.35){let e=parl.get(pk);if(!e)parl.set(pk,e={A:new Set(),B:new Set(),P:[]});e.A.add(k);e.B.add(k2);e.P.push([mx,mz]);continue;}
       if(ld<0.52&&!q4.has(pk)){const same=g.i===0&&t.i===0&&Math.hypot(g.a[0]-t.a[0],g.a[1]-t.a[1])<0.5;
         const touch=(g.i===0&&segDist(g.a[0],g.a[1],t.a[0],t.a[1],t.b[0],t.b[1])<t.w/2+1)||(t.i===0&&segDist(t.a[0],t.a[1],g.a[0],g.a[1],g.b[0],g.b[1])<g.w/2+1);
-        if(!same&&(touch||cross(g,t))&&!S.centers.some(c=>Math.hypot(mx-c.x,mz-c.z)<12)&&!(S.square&&Math.hypot(mx-S.square.x,mz-S.square.z)<12)){q4.add(pk);qa('Q4',mx,mz,'两条路以小于 30° 的尖角相交');}}}}});
+        if(!same&&(touch||cross(g,t))&&!S.centers.some(c=>Math.hypot(mx-c.x,mz-c.z)<12)&&!(S.square&&Math.hypot(mx-S.square.x,mz-S.square.z)<12)){q4.add(pk);q4raw.push([mx,mz]);}}}}});
+  // Q4 按路口计数：10 米内（约两倍路宽）的尖角接触点算同一个路口；路对数另存作严重度参考
+  const q4c=[];for(const [x,z] of q4raw){const c=q4c.find(c=>Math.hypot(c.x-x,c.z-z)<10);if(c){c.n++;}else q4c.push({x,z,n:1});}
+  Q.q4pairs=q4raw.length;for(const c of q4c)qa('Q4',c.x,c.z,c.n>1?'尖角路口（'+c.n+' 对路挤在一起）':'两条路以小于 30° 的尖角相交');
   for(const [pk,e] of parl){const len=Math.min(e.A.size,e.B.size)*2;if(len>=10){const m=e.P[e.P.length>>1];qa('Q3',m[0],m[1],'两条路贴着平行走约 '+len+' 米');Q.items[Q.items.length-1].pk=pk;}}
   const nearOther=(q,k)=>S.roads.some((r,j)=>j!==k&&roadDist(r,q[0],q[1])<r.w/2+2);
   S.roads.forEach((r,k)=>{const n=r.pts.length,len=(n-1)*2;if(r.main||len>=14)return;if(!(nearOther(r.pts[0],k)&&nearOther(r.pts[n-1],k))){const m=r.pts[n>>1];qa('Q5',m[0],m[1],'短断头路 '+len+' 米');}});
