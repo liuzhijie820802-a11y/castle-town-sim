@@ -263,6 +263,25 @@ function build(ctx){
   lap('路网');
   // 线形平滑：去掉逐步转向留下的折线（两端不动）
   for(const r of S.roads){const p=r.pts,wt=p.map(q=>riverDist(q[0],q[1])<BED+1.5);for(let it=0;it<3;it++){const q=p.map(v=>v.slice());for(let i=1;i<p.length-1;i++){q[i][0]=(p[i-1][0]+p[i][0]*2+p[i+1][0])/4;q[i][1]=(p[i-1][1]+p[i][1]*2+p[i+1][1])/4;}for(let i=1;i<p.length-1;i++)if(!wt[i]){p[i][0]=q[i][0];p[i][1]=q[i][1];}}} // 桥段（河道内的点）不参与平滑，保持直线
+  { // r8：一条路（主路除外）的开头或结尾一段贴着别的路平行走（约 6~7 米内、夹角<23°）时，把这段剪掉，从两路分开的地方用一小段直接接到那条路上
+    const PG=new Map(),pang=(p,i)=>{const a=p[Math.max(0,i-1)],b=p[Math.min(p.length-1,i+1)];return Math.atan2(b[1]-a[1],b[0]-a[0]);};
+    const idx=()=>{PG.clear();S.roads.forEach((r,k)=>{const p=r.pts;for(let i=0;i<p.length;i++){const key=Math.floor(p[i][0]/8)+','+Math.floor(p[i][1]/8);let L=PG.get(key);if(!L)PG.set(key,L=[]);L.push({k,x:p[i][0],z:p[i][1],ang:pang(p,i),w:r.w});}});};
+    const par=(k,w,x,z,a)=>{let best=null,bd=1e9;const gx=Math.floor(x/8),gz=Math.floor(z/8);for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++){const L=PG.get((gx+dx)+','+(gz+dz));if(L)for(const q of L){if(q.k===k)continue;const d=Math.hypot(q.x-x,q.z-z);if(d<(w+q.w)/2+3&&d<bd&&lineDa(a,q.ang)<0.4){bd=d;best=q;}}}return best;};
+    const dry=(A,B)=>{for(let u=0;u<=1.001;u+=0.25)if(riverDist(A[0]+(B[0]-A[0])*u,A[1]+(B[1]-A[1])*u)<BED+1.5)return false;return true;};
+    const comps=()=>{const N=S.roads.length,pa=[...Array(N).keys()],f=i=>pa[i]===i?i:(pa[i]=f(pa[i])),G=new Map();S.roads.forEach((r,i)=>{for(const q of r.pts){const kk=Math.floor(q[0]/4)+','+Math.floor(q[1]/4);let a=G.get(kk);if(!a)G.set(kk,a=[]);a.push([i,q]);}});
+      for(const [kk,a] of G){const [gx,gz]=kk.split(',').map(Number);for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++){const b=G.get((gx+dx)+','+(gz+dz));if(b)for(const u of a)for(const v of b)if(u[0]!==v[0]&&Math.abs(u[1][0]-v[1][0])<3&&Math.abs(u[1][1]-v[1][1])<3)pa[f(u[0])]=f(v[0]);}}let c=0;for(let i=0;i<N;i++)if(f(i)===i)c++;return c;};
+    let nc=comps();const anch=[];idx();const order=S.roads.map((r,k)=>k).filter(k=>!S.roads[k].main&&!S.roads[k].ring).sort((a,b)=>(S.roads[a].ring?1:0)-(S.roads[b].ring?1:0)||S.roads[a].pts.length-S.roads[b].pts.length);
+    for(const k of order){const r=S.roads[k];for(const end of [0,1]){const p=end?r.pts.slice().reverse():r.pts,n=p.length;let h=0,last=null;
+      while(h<n){const q=par(k,r.w,p[h][0],p[h][1],pang(p,h));if(!q)break;last=q;h++;}
+      if(h<3||n-h<7||!last)continue;if(p.slice(0,h).some(a=>anch.some(b=>Math.hypot(a[0]-b[0],a[1]-b[1])<0.6)))continue;
+      let head=null; // 在那条路上找接点：新接的一段与那条路夹角≥34°，与附近其他路夹角≥30°，长度 2~9 米，不过水
+      for(let h2=h;h2<=h+2&&!head&&n-h2>=7;h2++){let bs=-1;const P=p[h2];const gx=Math.floor(P[0]/8),gz=Math.floor(P[1]/8);for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++){const Q=PG.get((gx+dx)+','+(gz+dz));if(!Q)continue;for(const q of Q){if(q.k!==last.k)continue;const L=Math.hypot(P[0]-q.x,P[1]-q.z);if(L<2||L>9)continue;
+          const a=Math.atan2(P[1]-q.z,P[0]-q.x),ld=lineDa(a,q.ang);if(ld<0.6||ld<=bs)continue;if(!dry([q.x,q.z],P))continue;
+          let sh=false;for(const u of [0,0.5,1]){const x=q.x+(P[0]-q.x)*u,z=q.z+(P[1]-q.z)*u,hx=Math.floor(x/8),hz=Math.floor(z/8);for(let ex=-1;ex<=1&&!sh;ex++)for(let ez=-1;ez<=1&&!sh;ez++){const R=PG.get((hx+ex)+','+(hz+ez));if(R)for(const o of R)if(o.k!==k&&o.k!==last.k&&Math.hypot(o.x-x,o.z-z)<o.w/2+1.5&&lineDa(a,o.ang)<0.56){sh=true;break;}}}
+          if(sh)continue;bs=ld;head=[q.x,q.z];h=h2;}}}
+      if(!head)continue;
+      const np=[head].concat(p.slice(h)),bak=r.pts;r.pts=end?np.reverse():np;if(comps()>nc){r.pts=bak;continue;}r.deck=r.pts.map(()=>null);if(!end)r.acc0=((h-1)*2)%RULES.soft.houseSpacing;const gh=p.slice(0,h+1);(r.ghost=r.ghost||[]).push(end?gh.reverse():gh);anch.push(head);idx();}}
+  }
   // 路基：纵断面平滑并限坡，再整平路面、两侧放坡；桥段按两岸高度架设
   for(const r of S.roads){const p=r.pts,n=p.length,g=p.map(q=>heightAt(q[0],q[1])),wt=p.map(q=>riverDist(q[0],q[1])<BED+1.5);
     for(let i=0;i<n;i++)if(wt[i]){let j=i;while(j+1<n&&wt[j+1])j++;const a=i>0?g[i-1]:(j+1<n?g[j+1]:0),b=j+1<n?g[j+1]:a;for(let k=i;k<=j;k++)g[k]=a+(b-a)*(k-i+1)/(j-i+2);i=j;}
@@ -280,7 +299,6 @@ function build(ctx){
   const wl={kind:'well',x:T[0],z:T[1],w:2,d:2,yaw:aT};if(!wet(wl,0.5)){add(wl);wl.y1=gmax(wl)+1;}
   const stalls=[];for(let k=0;k<4;k++){const a=aT+Math.PI/4+k*Math.PI/2,b={kind:'stall',x:T[0]+Math.cos(a)*7,z:T[1]+Math.sin(a)*7,w:1.6,d:2.2,yaw:a};
     if(!inMap(b.x,b.z,2)||wet(b,0.5))continue;b.y1=gmax(b)+2.4;add(b);stalls.push(a);}
-
   // 6. 房屋：沿路两侧划出临街地块（第一排）和后排地块（第二排）；每块地试几种退后距离和尺寸，
   //    按“土方少、离城堡近、离河远”打分，好地先建，每块地只建一栋，建一栋平整一块地基
   const sp=RULES.soft.houseSpacing,target=Math.round(0.013*(K.townR*K.townR-K.r*K.r)),cands=[],RJ={far:0,square:0,map:0,wet:0,steep:0,road:0,overlap:0};S.rejects=RJ;
@@ -288,8 +306,9 @@ function build(ctx){
   const hr=(x,z,k)=>{let h=Math.imul(Math.round(x*2)|0,374761393)^Math.imul(Math.round(z*2)|0,668265263)^Math.imul((ctx.seed^(k*2654435761))|0,-2048144789);h=Math.imul(h^(h>>>13),1274126177);h^=h>>>16;return (h>>>0)/4294967296;}; // 按位置取的随机数
   const tnorm=(x,z)=>{if(mode==='A'){const dc=Math.hypot(x-K.x,z-K.z);return {far:dc>K.townR*1.3,n:(dc-S.rOut)/(K.townR-S.rOut+10)};}
     let n=1e9,far=true;for(const c of S.centers){const d=Math.hypot(x-c.x,z-c.z);if(d<=c.R*1.4)far=false;n=Math.min(n,d/(c.R+10));}return {far,n};};
-  for(const r of S.roads){ri++;let acc=0;const p=r.pts;
-    for(let i=1;i<p.length;i++){acc+=2;if(acc<sp)continue;acc=0;if(r.deck[i]!==null)continue;
+  const LINES=[];S.roads.forEach((r,k)=>{LINES.push({r,k,p:r.pts,a0:r.acc0||0,g:false});if(r.ghost)for(const gp of r.ghost)LINES.push({r,k,p:gp,a0:0,g:true});}); // r8：剪掉的平行段仍按原位置划临街地块，房子留在原处、朝向旁边那条路
+  for(const Ln of LINES){const r=Ln.r;ri=Ln.k;let acc=Ln.a0;const p=Ln.p;
+    for(let i=1;i<p.length;i++){acc+=2;if(acc<sp)continue;acc=0;if(!Ln.g&&r.deck[i]!==null)continue;
       const yaw=Math.atan2(p[i][1]-p[i-1][1],p[i][0]-p[i-1][0]),nx=-Math.sin(yaw),nz=Math.cos(yaw);
       for(const side of [-1,1])for(const row of [0,1,2]){const slot=slotId++,hk=side*11+row*3,W=6+hr(p[i][0],p[i][1],hk)*3,D=5+hr(p[i][0],p[i][1],hk+1)*2,h=3.5+hr(p[i][0],p[i][1],hk+2)*3.5,jit=hr(p[i][0],p[i][1],hk+3);
         for(const [k,push] of [[1,0],[1,1.5],[0.8,0],[0.8,1.5],[0.8,3],[0.65,0.5],[0.65,2]]){
