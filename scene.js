@@ -149,7 +149,7 @@ function build(ctx){
   // 4. 道路：每一步在几个方向里挑坡度小、少过河、不偏离大方向的；过河时直走架桥
   // 路网规则：已建道路的点放进 6 米格子，新路靠近旧路时决定是并入、丁字接上还是穿过；只有主路能架桥，而且必须垂直跨河、两岸落地、30 米内不能已有桥
   const RP=new Map(),rk=(x,z)=>Math.floor(x/6)+','+Math.floor(z/6);S.bridgeSpots=[];
-  const addRP=r=>{const p=r.pts;for(let i=0;i<p.length;i++){const a=p[Math.max(0,i-1)],b=p[Math.min(p.length-1,i+1)],k=rk(p[i][0],p[i][1]);let L=RP.get(k);if(!L)RP.set(k,L=[]);L.push({x:p[i][0],z:p[i][1],ang:Math.atan2(b[1]-a[1],b[0]-a[0]),w:r.w});}};
+  const addRP=r=>{const p=r.pts;for(let i=0;i<p.length;i++){const a=p[Math.max(0,i-1)],b=p[Math.min(p.length-1,i+1)],k=rk(p[i][0],p[i][1]);let L=RP.get(k);if(!L)RP.set(k,L=[]);L.push({x:p[i][0],z:p[i][1],ang:Math.atan2(b[1]-a[1],b[0]-a[0]),w:r.w,r});}};
   const nearRP=(x,z,lim)=>{let best=null,bd=lim;const gx=Math.floor(x/6),gz=Math.floor(z/6),R=Math.ceil(lim/6);
     for(let dx=-R;dx<=R;dx++)for(let dz=-R;dz<=R;dz++){const L=RP.get((gx+dx)+','+(gz+dz));if(L)for(const q of L){const d=Math.hypot(q.x-x,q.z-z);if(d<bd){bd=d;best=q;}}}return best;};
   const lineDa=(a,b)=>{const d=Math.abs(angDiff(a,b));return Math.min(d,Math.PI-d);};
@@ -190,8 +190,16 @@ function build(ctx){
     for(const pp of pieces)if(pp.length>4){const r={pts:pp,w:DIM.ROAD_W,main:false,ring:true,c:C,deck:pp.map(()=>null)};S.roads.push(r);addRP(r);}}
   const g0=S.gate||{x:K.x+ux*K.r,z:K.z+uz*K.r};
   let T,aT;
+  // r6：支巷照常生成（路线不变、不删），只检查它的第一段：如果起点紧挨着一条方向接近（夹角<32°）的别的路，就把起点沿母路挪到前后 2~8 米处，
+  //     让第一段和附近每条路的夹角都≥34°；找不到合适位置就保持原样。只动起点一个点，其余路线和临街地块不变。
+  const sharpAt=(x,z,a,self,lim,th)=>{const gx=Math.floor(x/6),gz=Math.floor(z/6),R=Math.ceil(lim/6);for(let dx=-R;dx<=R;dx++)for(let dz=-R;dz<=R;dz++){const L=RP.get((gx+dx)+','+(gz+dz));if(L)for(const q of L)if(q.r!==self&&Math.hypot(q.x-x,q.z-z)<lim&&lineDa(a,q.ang)<th)return true;}return false;};
+  const fixStart=(p,i,r)=>{if(!r||r.pts.length<4)return;const P=r.pts,lim=r.w/2+3,a0=Math.atan2(P[1][1]-P[0][1],P[1][0]-P[0][0]);if(!sharpAt(P[0][0],P[0][1],a0,r,lim,0.56))return;
+    for(let k=1;k<=3&&k<P.length-1;k++)for(const o of [0,1,-1,2,-2,3,-3,4,-4]){const j=i+o;if(j<0||j>=p.length)continue;const q=p[j],T=P[k],L=Math.hypot(T[0]-q[0],T[1]-q[1]);if(L<2||L>10)continue;const a=Math.atan2(T[1]-q[1],T[0]-q[0]);
+      const an=Math.atan2(P[k+1][1]-T[1],P[k+1][0]-T[0]);let dt=Math.abs(a-an)%(2*Math.PI);if(dt>Math.PI)dt=2*Math.PI-dt;if(dt>1.0)continue;
+      if(sharpAt(q[0],q[1],a,r,lim,0.6))continue;let wet=false;for(let u=0;u<=1.001;u+=0.25)if(riverDist(q[0]+(T[0]-q[0])*u,q[1]+(T[1]-q[1])*u)<BED+1.5)wet=true;if(wet)continue;r.pts=[[q[0],q[1]]].concat(P.slice(k));return;}};
+  const lane=(p,i,a,len)=>fixStart(p,i,makeRoad(p[i][0],p[i][1],a,len,DIM.ROAD_W,false,null,true));
   const ringLanes=()=>{for(const r of S.roads.filter(r=>r.ring&&!r.laned)){r.laned=true;const p=r.pts,C=r.c;for(let i=8;i<p.length-3;i+=12){const a=Math.atan2(p[i+1][1]-p[i-1][1],p[i+1][0]-p[i-1][0]);
-    const out=Math.cos(a+Math.PI/2)*(p[i][0]-C.x)+Math.sin(a+Math.PI/2)*(p[i][1]-C.z)>0?1:-1;makeRoad(p[i][0],p[i][1],a+out*Math.PI/2,18+rnd()*12,DIM.ROAD_W,false,null,true);}}};
+    const out=Math.cos(a+Math.PI/2)*(p[i][0]-C.x)+Math.sin(a+Math.PI/2)*(p[i][1]-C.z)>0?1:-1;lane(p,i,a+out*Math.PI/2,18+rnd()*12);}}};
   if(mode==='A'){ // A：城镇跟随城堡，从城门主路上的广场出发，环路绕城堡
     const main=makeRoad(g0.x+ux*3,g0.z+uz*3,ag,400,DIM.MAIN_W,true),mp=main.pts;S.gateRoad=main;
     let ti=mp.findIndex(p=>Math.hypot(p[0]-K.x,p[1]-K.z)>=midR&&riverDist(p[0],p[1])>BED+12); // 广场离河要有余量
@@ -204,9 +212,9 @@ function build(ctx){
       for(const sg of [-1,1]) contourRoad(st,sg,1.7*rr,K,S.rOut+8,K.townR+10);}
     ringLanes();
     for(const f of [0.2,0.75,1.05]){const rr=K.r+(K.townR-K.r)*f,i=mp.findIndex(p=>Math.hypot(p[0]-K.x,p[1]-K.z)>=rr);
-      if(i>0&&Math.abs(i-ti)>5) for(const sg of [-1,1]) makeRoad(mp[i][0],mp[i][1],headAt(i)+sg*Math.PI/2,22+rnd()*14,DIM.ROAD_W,false,null,true);}
+      if(i>0&&Math.abs(i-ti)>5) for(const sg of [-1,1]) lane(mp,i,headAt(i)+sg*Math.PI/2,22+rnd()*14);}
     for(let i=ti+6;i<mp.length-3;i+=12){const r0=Math.hypot(mp[i][0]-K.x,mp[i][1]-K.z);if(r0>K.townR)break;if(riverDist(mp[i][0],mp[i][1])<BED+6)continue;
-      for(const sg of [-1,1])makeRoad(mp[i][0],mp[i][1],headAt(i)+sg*Math.PI/2,18+rnd()*12,DIM.ROAD_W,false,null,true);}
+      for(const sg of [-1,1])lane(mp,i,headAt(i)+sg*Math.PI/2,18+rnd()*12);}
     S.centers.push({x:K.x,z:K.z,R:K.townR});
   } else { // B/C：城镇按地形自选中心（集市），城门只用一条路接过来；C 还会在河对岸再选一个中心并架桥连通
     const Rt=(K.townR-K.r)*0.75+12;
