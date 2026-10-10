@@ -187,7 +187,10 @@ function build(ctx){
       if(q&&lineDa(Math.atan2(mz,mx),q.ang)<0.52){if(!skip){pts.push([q.x,q.z]);pieces.push(pts);}skip=q;continue;}
       if(skip){pts=[[skip.x,skip.z]];skip=null;}pts.push([x,z]);}
     if(!skip)pieces.push(pts);
-    for(const pp of pieces)if(pp.length>4){const r={pts:pp,w:DIM.ROAD_W,main:false,ring:true,c:C,deck:pp.map(()=>null)};S.roads.push(r);addRP(r);}}
+    const parPt=(p,a)=>{const gx=Math.floor(p[0]/6),gz=Math.floor(p[1]/6);for(let dx=-2;dx<=2;dx++)for(let dz=-2;dz<=2;dz++){const L=RP.get((gx+dx)+','+(gz+dz));if(L)for(const q of L)if(Math.hypot(q.x-p[0],q.z-p[1])<DIM.ROAD_W+3&&lineDa(a,q.ang)<0.4)return true;}return false;};
+    // r7：整段几乎都贴着已有道路平行走（7 米内、夹角<23°的点占 8 成以上）的环路段不建，它只是旧路旁边的一条重复路
+    const dup=pp=>{let n=0;for(let i=0;i<pp.length;i++){const a=pp[Math.max(0,i-1)],b=pp[Math.min(pp.length-1,i+1)];if(parPt(pp[i],Math.atan2(b[1]-a[1],b[0]-a[0])))n++;}return n>=0.8*pp.length;};
+    for(const pp of pieces)if(pp.length>4&&!dup(pp)){const r={pts:pp,w:DIM.ROAD_W,main:false,ring:true,c:C,deck:pp.map(()=>null)};S.roads.push(r);addRP(r);}}
   const g0=S.gate||{x:K.x+ux*K.r,z:K.z+uz*K.r};
   let T,aT;
   // r6：支巷照常生成（路线不变、不删），只检查它的第一段：如果起点紧挨着一条方向接近（夹角<32°）的别的路，就把起点沿母路挪到前后 2~8 米处，
