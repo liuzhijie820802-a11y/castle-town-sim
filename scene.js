@@ -77,6 +77,8 @@ function makeEditor(G){const N=G.N,c=G.cell,h=G.h,lock=new Uint8Array(N*N);
       const [i0,i1,j0,j1]=box(b.x-R,b.z-R,b.x+R,b.z+R,0);
       for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){const k=j*N+i;if(!lock[k])continue;const dx=i*c-b.x,dz=j*c-b.z,e=Math.max(Math.abs(dx*co+dz*si)-b.w/2,Math.abs(-dx*si+dz*co)-b.d/2);if(e<=margin&&(lock[k]===2||e<=0||!onlyHouse))out.push(h[k]);}
       return out;},
+    settle(b,y,m){const co=Math.cos(b.yaw),si=Math.sin(b.yaw),R=Math.hypot(b.w/2+m,b.d/2+m);const [i0,i1,j0,j1]=box(b.x-R,b.z-R,b.x+R,b.z+R,0); // r9：房屋全部落位后，把占地外扩一格内（双线性插值会用到的格点）整平到地基高度；只动还没被锁定的格点（道路、河道、任何房屋地基都不动）
+      for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){const k=j*N+i;if(lock[k]||G.water[k])continue;const dx=i*c-b.x,dz=j*c-b.z,e=Math.max(Math.abs(dx*co+dz*si)-b.w/2,Math.abs(-dx*si+dz*co)-b.d/2);if(e>m)continue;h[k]=y;lock[k]=3;}},
     cell:c,
     locked(x,z){const i=Math.floor(x/c),j=Math.floor(z/c);for(const [a,b] of [[0,0],[1,0],[0,1],[1,1]]){const ii=Math.min(N-1,i+a),jj=Math.min(N-1,j+b);if(!lock[jj*N+ii])return false;}return true;}
   };}
@@ -335,7 +337,8 @@ function build(ctx){
       const lk=ed.lockedIn(b,ed.cell*0.75,true); // r3：按格点查占地外扩 0.75 格内被别家房屋地基锁定的格点（道路格点只算占地内的），高差超过 0.8 米就放弃这个位置
       if(lk.length){if(Math.max(...lk)-Math.min(...lk)>0.8){RJ.steep++;continue;}y=lk.reduce((u,v)=>u+v,0)/lk.length;} }
     ed.rect(b,y,1,2+1.5*(hi-lo),2); // r3：地基锁定外扩从 2 米收到 1 米，避免挤占相邻房屋的地基
-    b.y1=y+c.h;b.h=c.h;b.cut=Math.max(0,hi-y);b.fill=Math.max(0,y-lo);delete b.sx;delete b.sz;add(b);built++;used.add(c.slot);}
+    b.y1=y+c.h;b.h=c.h;b.cut=Math.max(0,hi-y);b.fill=Math.max(0,y-lo);b.fy=y;delete b.sx;delete b.sz;add(b);built++;used.add(c.slot);}
+  for(const o of S.boxes)if(o.kind==='house')ed.settle(o,o.fy,ed.cell*1.05);
   S.houseCands=cands.length;S.houseTarget=target;
   lap('房屋落位');
 
