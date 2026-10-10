@@ -60,11 +60,11 @@ function surfaceAt(S,ctx,x,z){ // 磁吸：取该点所有可站立表面里最�
 // ===== 地形修正工具：在高度网格上做平整（内区整平并锁定，外圈平滑放坡；河道永不改动）=====
 function makeEditor(G){const N=G.N,c=G.cell,h=G.h,lock=new Uint8Array(N*N);
   const box=(x0,z0,x1,z1,R)=>[Math.max(0,Math.floor((x0-R)/c)),Math.min(N-1,Math.ceil((x1+R)/c)),Math.max(0,Math.floor((z0-R)/c)),Math.min(N-1,Math.ceil((z1+R)/c))];
-  function put(k,d,t,skirt){if(lock[k]||G.water[k]||d>skirt)return;let w=1;if(d>0){const q=1-d/skirt;w=q*q*(3-2*q);}h[k]+=(t-h[k])*w;if(d<=0)lock[k]=1;}
+  let tag=1;function put(k,d,t,skirt){if(lock[k]||G.water[k]||d>skirt)return;let w=1;if(d>0){const q=1-d/skirt;w=q*q*(3-2*q);}h[k]+=(t-h[k])*w;if(d<=0)lock[k]=tag;} // tag：1=道路/广场/城堡，2=房屋地基
   return {
-    rect(b,y,margin,skirt){const co=Math.cos(b.yaw),si=Math.sin(b.yaw),hw=b.w/2+margin,hd=b.d/2+margin,R=Math.hypot(hw,hd);
+    rect(b,y,margin,skirt,tg){tag=tg||1;const co=Math.cos(b.yaw),si=Math.sin(b.yaw),hw=b.w/2+margin,hd=b.d/2+margin,R=Math.hypot(hw,hd);
       const [i0,i1,j0,j1]=box(b.x-R,b.z-R,b.x+R,b.z+R,skirt);
-      for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){const dx=i*c-b.x,dz=j*c-b.z,d=Math.max(Math.abs(dx*co+dz*si)-hw,Math.abs(-dx*si+dz*co)-hd);put(j*N+i,d,y,skirt);}},
+      for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){const dx=i*c-b.x,dz=j*c-b.z,d=Math.max(Math.abs(dx*co+dz*si)-hw,Math.abs(-dx*si+dz*co)-hd);put(j*N+i,d,y,skirt);}tag=1;},
     disc(cx,cz,r,y,skirt){const [i0,i1,j0,j1]=box(cx-r,cz-r,cx+r,cz+r,skirt);
       for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++)put(j*N+i,Math.hypot(i*c-cx,j*c-cz)-r,y,skirt);},
     road(r,prof,half,skirt){const p=r.pts,R=half+skirt,best=new Map();
@@ -73,6 +73,11 @@ function makeEditor(G){const N=G.N,c=G.cell,h=G.h,lock=new Uint8Array(N*N);
         for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){const x=i*c,z=j*c;let t=l?((x-ax)*dx+(z-az)*dz)/l:0;t=clamp(t,0,1);const d=Math.hypot(x-ax-t*dx,z-az-t*dz);
           if(d>R)continue;const k=j*N+i,cur=best.get(k);if(!cur||d<cur[0])best.set(k,[d,prof[s]+(prof[s+1]-prof[s])*t]);}}
       for(const [k,v] of best) put(k,v[0]-half,v[1],skirt);},
+    lockedIn(b,margin,onlyHouse){const co=Math.cos(b.yaw),si=Math.sin(b.yaw),hw=b.w/2+margin,hd=b.d/2+margin,R=Math.hypot(hw,hd),out=[]; // 占地（含外扩）范围内已被别的平台锁定的格点高度
+      const [i0,i1,j0,j1]=box(b.x-R,b.z-R,b.x+R,b.z+R,0);
+      for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){const k=j*N+i;if(!lock[k])continue;const dx=i*c-b.x,dz=j*c-b.z,e=Math.max(Math.abs(dx*co+dz*si)-b.w/2,Math.abs(-dx*si+dz*co)-b.d/2);if(e<=margin&&(lock[k]===2||e<=0||!onlyHouse))out.push(h[k]);}
+      return out;},
+    cell:c,
     locked(x,z){const i=Math.floor(x/c),j=Math.floor(z/c);for(const [a,b] of [[0,0],[1,0],[0,1],[1,1]]){const ii=Math.min(N-1,i+a),jj=Math.min(N-1,j+b);if(!lock[jj*N+ii])return false;}return true;}
   };}
 
@@ -294,10 +299,10 @@ function build(ctx){
     if(footprint(b).some(q=>nearRoad(q[0],q[1],0.6))){RJ.road++;continue;}
     if(hitsBox(b,0.8)){RJ.overlap++;continue;}
     const lo=gmin(b),hi=gmax(b);let y=b.row?gmean(b):heightAt(b.sx,b.sz); // 临街房地基与街面同高；后排房取地块平均高度
-    { // 地基冲突：占地里已有别的房屋或道路整平过的格点时，地基高度跟它们对齐；已整平的格点高差超过 0.5 米说明这块地夹在两个平台之间，放弃
-      const lk=footprint(b).filter(q=>ed.locked(q[0],q[1])).map(q=>heightAt(q[0],q[1]));
-      if(lk.length){if(Math.max(...lk)-Math.min(...lk)>0.5){RJ.steep++;continue;}y=lk.reduce((u,v)=>u+v,0)/lk.length;} }
-    ed.rect(b,y,2,2+1.5*(hi-lo));
+    { // 地基冲突：占地附近已有别的房屋地基（或占地内有道路）整平过的格点时，地基高度跟它们对齐；高差太大说明这块地夹在两个平台之间，放弃
+      const lk=ed.lockedIn(b,ed.cell*0.75,true); // r3：按格点查占地外扩 0.75 格内被别家房屋地基锁定的格点（道路格点只算占地内的），高差超过 0.8 米就放弃这个位置
+      if(lk.length){if(Math.max(...lk)-Math.min(...lk)>0.8){RJ.steep++;continue;}y=lk.reduce((u,v)=>u+v,0)/lk.length;} }
+    ed.rect(b,y,1,2+1.5*(hi-lo),2); // r3：地基锁定外扩从 2 米收到 1 米，避免挤占相邻房屋的地基
     b.y1=y+c.h;b.h=c.h;b.cut=Math.max(0,hi-y);b.fill=Math.max(0,y-lo);delete b.sx;delete b.sz;add(b);built++;used.add(c.slot);}
   S.houseCands=cands.length;S.houseTarget=target;
   lap('房屋落位');
