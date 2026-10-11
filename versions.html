@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>版本记录 · 城堡+城镇</title>
+<style>
+body{margin:0;background:#1b1d22;color:#e8e8e8;font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif}
+header{position:sticky;top:0;z-index:2;background:#25282f;border-bottom:1px solid #353944;padding:12px 20px;display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+h1{font-size:18px;margin:0 12px 0 0}
+#cur{font-size:13px;color:#9aa1b0}#cur b{color:#8fd18f}
+input{background:#1b1d22;border:1px solid #444a57;color:#fff;padding:6px 10px;border-radius:4px;width:220px}
+.chip{background:#363b47;border:1px solid #4a5060;color:#ccd;padding:4px 10px;border-radius:12px;cursor:pointer;font-size:12px}.chip.on{background:#c98a3b;border-color:#c98a3b;color:#111}
+main{max-width:1100px;margin:0 auto;padding:16px 20px 60px}
+.tip{font-size:13px;color:#9aa1b0;margin:4px 0 16px;line-height:1.7}
+.card{display:flex;gap:18px;background:#23262d;border:1px solid #353944;border-radius:8px;padding:14px;margin-bottom:14px}
+.card.now{border-color:#5cae5c;box-shadow:0 0 0 1px #5cae5c inset}
+.card img{width:220px;height:220px;border-radius:4px;flex:none;object-fit:cover;background:#111}
+.meta{font-size:12px;color:#9aa1b0;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.v{font-size:20px;font-weight:700;color:#e8c070}.stage{background:#363b47;padding:1px 8px;border-radius:10px}.badge{background:#5cae5c;color:#111;padding:1px 8px;border-radius:10px;font-weight:600}
+.t{font-size:16px;font-weight:600;margin:6px 0 8px}
+ul{margin:0 0 8px;padding-left:20px;font-size:13px;line-height:1.75}
+.eff{font-size:13px;color:#b8d8a8;margin-bottom:10px}
+.act{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px;color:#9aa1b0}
+.act a{background:#363b47;border:1px solid #4a5060;color:#e8e8e8;padding:5px 12px;border-radius:4px;text-decoration:none;font-size:13px}.act a:hover{background:#414757}
+#rb{font-size:13px;color:#ffb347;margin-bottom:14px;line-height:1.7}
+@media(max-width:700px){.card{flex-direction:column}.card img{width:100%;height:auto}}
+</style></head><body>
+<header><h1>版本记录 · 城堡+城镇</h1><span id="cur"></span><input id="q" placeholder="搜索：码头、桥、地基……"><span id="chips"></span></header>
+<main><div class="tip">每次自动验证全过就直接上线，并在这里记一条。每条有当时的截图、改了什么、效果。想回到某一版：先点「打开这一版」看看，确定后对 Fo 说「回滚到 v0.x」，约一分钟恢复，历史不会删。</div><div id="rb"></div><div id="list"></div></main>
+<script>
+const REPO='https://github.com/liuzhijie820802-a11y/castle-town-sim',RAW='https://raw.githubusercontent.com/liuzhijie820802-a11y/castle-town-sim/main/';
+const PRE=v=>'https://htmlpreview.github.io/?'+REPO+'/blob/'+v+'/index.html#seed=20261005&size=512&mode=2d';
+let D=null,stage='全部';
+function load(){return fetch(RAW+'versions/versions.json?t='+Date.now()).then(r=>{if(!r.ok)throw 0;return r.json();}).catch(()=>fetch('versions/versions.json').then(r=>r.json()));}
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function draw(){const q=document.getElementById('q').value.trim();
+  const L=D.versions.filter(x=>(stage==='全部'||x.stage===stage)&&(!q||JSON.stringify(x).includes(q)));
+  document.getElementById('list').innerHTML=L.map(x=>`<div class="card${x.v===D.current?' now':''}" id="${esc(x.v)}">
+    <img loading="lazy" src="${RAW}versions/thumbs/${esc(x.v)}.jpg" onerror="this.src='versions/thumbs/${esc(x.v)}.jpg';this.onerror=null" alt="${esc(x.v)} 截图">
+    <div><div class="meta"><span class="v">${esc(x.v)}</span><span>${esc(x.date)}</span><span class="stage">${esc(x.stage)}</span>${x.v===D.current?'<span class="badge">当前线上</span>':''}</div>
+    <div class="t">${esc(x.title)}</div><ul>${x.changes.map(c=>'<li>'+esc(c)+'</li>').join('')}</ul><div class="eff">效果：${esc(x.effect)}</div>
+    <div class="act"><a href="${PRE(x.v)}" target="_blank">打开这一版</a><span>回到这一版：对 Fo 说「回滚到 ${esc(x.v)}」</span></div></div></div>`).join('')||'<div class="tip">没有找到。</div>';}
+load().then(d=>{D=d;document.getElementById('cur').innerHTML='当前线上：<b>'+esc(d.current)+'</b> · 共 '+d.versions.length+' 个版本';
+  const st=['全部',...new Set(d.versions.map(x=>x.stage))];const C=document.getElementById('chips');
+  C.innerHTML=st.map(s=>`<button class="chip${s===stage?' on':''}">${esc(s)}</button>`).join(' ');
+  C.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{stage=b.textContent;C.querySelectorAll('.chip').forEach(o=>o.classList.toggle('on',o===b));draw();});
+  document.getElementById('rb').innerHTML=(d.rollbacks||[]).length?'回滚记录：'+d.rollbacks.map(r=>esc(r.date)+' 从 '+esc(r.from)+' 回到 '+esc(r.to)+(r.why?'（'+esc(r.why)+'）':'')).join('；'):'';
+  document.getElementById('q').oninput=draw;draw();});
+</script></body></html>
