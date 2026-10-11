@@ -56,6 +56,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
     <label class="row"><input id="river" type="checkbox" checked> 有河流</label>
     <label class="row"><input id="showq" type="checkbox"> 标出路网问题（红圈）</label>
     <label class="row"><input id="showplan" type="checkbox"> 显示规划图（中心、主干道）</label>
+    <label class="row" title="自动放码头、作坊，并各修一条路过去；关掉就是单中心（v0.11 的结果）"><input id="mc" type="checkbox" checked> 多中心（码头、作坊）</label>
     <label>城镇规模<select id="town"><option value="s">小</option><option value="m" selected>中</option><option value="l">大</option></select></label>
     <label>城镇生长<select id="tg"><option value="A" selected>A 跟随城堡</option><option value="B">B 单中心</option><option value="C">C 多中心</option></select></label>
     <label>地块大小<select id="size"><option value="256" selected>256 米</option><option value="512">512 米</option><option value="1024">1024 米</option></select></label>
@@ -82,7 +83,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
 // ===== 配置 =====
 const CFG = { N: 129, SIZE: 256, HMAX: 32, RIVER_BED: 4, RIVER_BANK: 18 }; // 网格顶点数 / 地块边长(米) / 最大高度(米) / 河床半宽 / 河岸过渡宽度
 const TOWN = { s: { name: '小', r: 25 }, m: { name: '中', r: 40 }, l: { name: '大', r: 60 } };
-const P = { seed: 20261005, relief: 1, river: true, town: 'm', walls: 2, size: 256, tg: 'A' };  // 生成参数
+const P = { seed: 20261005, relief: 1, river: true, town: 'm', walls: 2, size: 256, tg: 'A', mc: true };  // 生成参数
 const O = { castle: null };                                                 // 人工覆盖：重新生成时保留，不被自动结果冲掉
 const S = { mode: '2d', heights: null, minH: 0, maxH: 0, errors: [], view2d: null, webgl: false, river: null, autoCastle: null };
 window.addEventListener('error', e => S.errors.push(String(e.message)));
@@ -342,7 +343,7 @@ function build3D(){
     data.set([x,h,z,n[0],n[1],n[2],col[0]/255,col[1]/255,col[2]/255],o);}
   gl.bindBuffer(gl.ARRAY_BUFFER,vbo); gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
 }
-function sceneCtx(){return {heightAt,riverDist,isWater,SIZE:CFG.SIZE,BED:CFG.RIVER_BED,HMAX:CFG.HMAX,castle:castle(),seed:P.seed,baseAt,townMode:P.tg,riverX:(P.river&&S.river)?riverX:null,
+function sceneCtx(){return {heightAt,riverDist,isWater,SIZE:CFG.SIZE,BED:CFG.RIVER_BED,HMAX:CFG.HMAX,castle:castle(),seed:P.seed,baseAt,townMode:P.tg,multi:P.mc,riverX:(P.river&&S.river)?riverX:null,
   grid:{N:CFG.N,cell:CFG.SIZE/(CFG.N-1),h:S.heights,base:S.baseHeights,water:S.waterGrid}};}
 function buildScene(){ // 先恢复原始地形，再生成场景（场景会修正地形），最后按硬规则自检
   if(S.baseHeights) S.heights.set(S.baseHeights);
@@ -391,6 +392,11 @@ function drawScene2D(ctx){const sn=S.scene,v=S.view2d;if(!sn||!window.SCENE)retu
   if(sn.square){ctx.fillStyle=rgb(K.square);ctx.beginPath();ctx.arc(X(sn.square.x),Y(sn.square.z),sn.square.r*v.sc,0,Math.PI*2);ctx.fill();}
   for(const b of sn.boxes){const c=b.kind==='house'?K.roof:(b.kind==='stall'?K.stallTop:K[b.kind]);poly(b,rgb(c),b.bad?'#ff3b3b':'rgba(0,0,0,0.35)',(b.bad?2.5:0.8)*d);}
   for(const p of sn.people){ctx.beginPath();ctx.arc(X(p.x),Y(p.z),Math.max(1.6*d,0.45*v.sc),0,Math.PI*2);ctx.fillStyle=p.bad?'#ff3b3b':rgb(K[p.role]);ctx.fill();}
+  if(P.mc&&sn.hubs&&sn.hubs.length){ctx.globalAlpha=1;ctx.font='bold '+(12*d)+'px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+    for(const h of sn.hubs){const cx=X(h.x),cy=Y(h.z),R=Math.max(7*d,h.r*v.sc),col=PLAN_COL[h.type]||'#fff';
+      ctx.beginPath();ctx.arc(cx,cy,R,0,Math.PI*2);ctx.fillStyle=col;ctx.globalAlpha=0.85;ctx.fill();ctx.globalAlpha=1;ctx.lineWidth=2*d;ctx.strokeStyle='#fff';ctx.stroke();
+      const tw=ctx.measureText(h.type).width+10*d,ty=cy-R-11*d;ctx.fillStyle='rgba(20,22,28,0.85)';ctx.fillRect(cx-tw/2,ty-9*d,tw,18*d);ctx.fillStyle=col;ctx.fillText(h.type,cx,ty);}
+    ctx.textAlign='left';ctx.textBaseline='alphabetic';}
   if($('showq')&&$('showq').checked&&sn.quality&&!S.preview){ctx.globalAlpha=1;ctx.lineWidth=2.5*d;ctx.font=(11*d)+'px sans-serif';for(const it of sn.quality.items){const R=Math.max(9*d,10*v.sc);ctx.strokeStyle='#ff2a2a';ctx.beginPath();ctx.arc(X(it.x),Y(it.z),R,0,7);ctx.stroke();ctx.fillStyle='#ff2a2a';ctx.fillText(it.id,X(it.x)+R+2,Y(it.z)+4*d);}}
   if($('showplan')&&$('showplan').checked&&!S.preview) drawPlan(ctx,X,Y,d,v);
   ctx.restore();}
@@ -447,7 +453,7 @@ function resetCastle(){O.castle=null; buildScene(); syncPanel(); refresh(); writ
 function syncPanel(){
   $('seed').value=P.seed; $('relief').value=P.relief; $('vRelief').textContent=Number(P.relief).toFixed(1);
   $('river').checked=P.river; $('town').value=P.town; $('walls').value=String(P.walls); $('size').value=String(P.size);
-  $('tg').value=P.tg;
+  $('tg').value=P.tg; $('mc').checked=P.mc;
   const m=$('cmode'); m.textContent=O.castle?(O.snapped?'手动（已自动避开河道）':'手动（已覆盖自动结果）'):'自动'; m.className=O.castle?'manual':''; $('cauto').disabled=!O.castle;}
 let flashT=0; function flash(t){S.flash=t;clearTimeout(flashT);refresh();flashT=setTimeout(()=>{S.flash='';refresh();},1800);}
 function refresh(){ if(!S.heights) return;
@@ -461,13 +467,14 @@ function refresh(){ if(!S.heights) return;
     +(S.scene&&S.scene.grade?'<br>路面坡度 修正前平均 '+(S.scene.grade.baseMean*100).toFixed(0)+'% → 修正后 '+(S.scene.grade.mean*100).toFixed(0)+'%（'+Math.round(S.scene.grade.okFrac*100)+'% 路段不超过 12%）':'')
     +(S.scene&&S.scene.conn?'<br>城镇中心 '+S.scene.conn.centers+' 个 · 桥 '+S.scene.conn.bridges+' 座 · 连不上城门路网的房屋 '+S.scene.conn.isolated+' 栋':'')
     +(S.timing?'<br>生成耗时 '+Math.round(['terrain','water','site','build','audit','mesh','objects','map'].reduce((a,k)=>a+(S.timing[k]||0),0))+' 毫秒（场景 '+Math.round(S.timing.build||0)+'）':'')
-    +'<br><span style="color:#8a909c">v0.11：规划图数据层（D0），可导出、导入、本机保存</span>';
+    +'<br><span style="color:#8a909c">v0.12：多中心（D1），自动放码头、作坊</span>';
+  if(S.scene&&S.scene.hubs&&P.mc){$('hud').innerHTML+='<br>功能中心 '+(S.scene.hubs.map(h=>h.type).join('、')||'无')+(S.scene.hubMiss.length?'（'+S.scene.hubMiss.map(m=>m.split('：')[0]).join('、')+'没放成）':'');}
   if(S.scene&&S.scene.quality){const q=S.scene.quality.cnt;$('hud').innerHTML+='<br>路网问题 '+S.scene.quality.total+'（桥 '+q.Q1+' · 桥太密 '+q.Q2+' · 平行贴路 '+q.Q3+' · 尖角 '+q.Q4+' · 短断头 '+q.Q5+'）';}
   if(S.audit) $('rules').innerHTML=SCENE.RULES.hard.map(r=>{const n=S.audit.cnt[r.id];return '<div class="'+(n?'ng':'ok')+'">'+(n?'✗ ':'✓ ')+r.name+(n?' ×'+n:'')+'</div>';}).join('');
   if(S.mode==='3d') $('probe').innerHTML='左键拖动：旋转<br>右键 / Shift+拖动：平移<br>滚轮：缩放'; else if(!/^X /.test($('probe').innerHTML)) $('probe').innerHTML='移动鼠标到地形上查看坐标';
   $('status').textContent=S.flash||(S.errors.length?('⚠ '+S.errors[0]):(S.audit&&S.audit.total?('⚠ 硬规则有 '+S.audit.total+' 处违反（已标红）'):'就绪'));
 }
-function writeHash(){const q=new URLSearchParams();q.set('seed',P.seed);q.set('relief',P.relief);q.set('river',P.river?1:0);q.set('town',P.town);q.set('walls',P.walls);q.set('size',P.size);q.set('tg',P.tg);
+function writeHash(){const q=new URLSearchParams();q.set('seed',P.seed);q.set('relief',P.relief);q.set('river',P.river?1:0);q.set('town',P.town);q.set('walls',P.walls);q.set('size',P.size);q.set('tg',P.tg);q.set('mc',P.mc?1:0);
   if(O.castle){q.set('cx',O.castle.x.toFixed(1));q.set('cz',O.castle.z.toFixed(1));} q.set('mode',S.mode);
   const u=location.href.split('#')[0]+'#'+q.toString(); try{history.replaceState(null,'',u);}catch(e){} }
 function readHash(){const q=new URLSearchParams(location.hash.slice(1));
@@ -478,6 +485,7 @@ function readHash(){const q=new URLSearchParams(location.hash.slice(1));
   const w=Number(q.get('walls')); if(w>=1&&w<=3) P.walls=w;
   const sz=Number(q.get('size')); if([256,512,1024].includes(sz)) P.size=sz;
   if(['A','B','C'].includes(q.get('tg'))) P.tg=q.get('tg');
+  if(q.has('mc')) P.mc=q.get('mc')!=='0';
   if(q.has('cx')&&q.has('cz')) O.castle={x:Number(q.get('cx')),z:Number(q.get('cz'))};
   S.mode=q.get('mode')==='3d'?'3d':'2d';}
 $('gen').onclick=()=>generate($('seed').value);
@@ -491,22 +499,39 @@ $('town').onchange=e=>setParams({town:e.target.value});
 $('walls').onchange=e=>setParams({walls:Number(e.target.value)});
 $('size').onchange=e=>setParams({size:Number(e.target.value)});
 $('tg').onchange=e=>setParams({tg:e.target.value});
+$('mc').onchange=e=>setParams({mc:e.target.checked});
 $('cauto').onclick=resetCastle;
 $('earth').onclick=()=>{S.showEarth=!S.showEarth;$('earth').textContent=S.showEarth?'隐藏挖填方':'显示挖填方';build3D();refresh();};
 $('copy').onclick=()=>{if(navigator.clipboard)navigator.clipboard.writeText(location.href).then(()=>flash('链接已复制'),()=>flash('复制失败，请直接复制地址栏'));else flash('请直接复制地址栏');};
 window.addEventListener('resize',refresh);
 
 // ===== 规划图（D0）：把当前结果整理成可保存、可导入的数据。外观不变；同一份规划图必定重现同一场景 =====
-const PLAN_VER=1, PLAN_COL={'城堡':'#9aa0b4','城门':'#f2f2f2','集市':'#f0a020','城镇中心':'#5cc06a'};
+const PLAN_VER=1, PLAN_COL={'城堡':'#9aa0b4','城门':'#f2f2f2','集市':'#f0a020','居住':'#5cc06a','码头':'#4aa8ff','作坊':'#c8784a'};
 const r1=v=>Math.round(v*10)/10;
 function sceneFingerprint(){const s=S.scene;if(!s)return '';let h=2166136261;const add=t=>{t=String(t);for(let i=0;i<t.length;i++){h^=t.charCodeAt(i);h=Math.imul(h,16777619);}};
   for(const b of s.boxes)add(b.kind+b.x.toFixed(2)+','+b.z.toFixed(2)+','+b.w.toFixed(2)+'|');
   for(const r of s.roads){for(const p of r.pts)add(p[0].toFixed(2)+','+p[1].toFixed(2));add('/');}
   add('p'+s.people.length+'f'+s.fields.length);return (h>>>0).toString(16).padStart(8,'0');}
+function residential(){const s=S.scene;if(!s)return [];const cs=s.centers||[],g=cs.map(()=>[]);
+  for(const b of s.boxes){if(b.kind!=='house')continue;let bi=0,bd=1e9;cs.forEach((c,i)=>{const d=Math.hypot(b.x-c.x,b.z-c.z);if(d<bd){bd=d;bi=i;}});if(g[bi])g[bi].push(b);}
+  return g.filter(a=>a.length>=5).map(a=>{const x=a.reduce((v,b)=>v+b.x,0)/a.length,z=a.reduce((v,b)=>v+b.z,0)/a.length,d=a.map(b=>Math.hypot(b.x-x,b.z-z)).sort((p,q)=>p-q);return {x,z,r:d[Math.floor(d.length*0.8)]||10,n:a.length};});}
+// 路程：沿路网（路线上的点，相邻点相连，不同道路 3 米内的点视为路口相通）从集市出发的最短路程；房屋按临街点就近上路
+function reach(){const s=S.scene;if(!s||!s.square)return null;const P=[],G=new Map(),key=(x,z)=>Math.floor(x/4)+','+Math.floor(z/4),E=[];
+  s.roads.forEach((r,ri)=>r.pts.forEach((q,i)=>{const id=P.length;P.push(q);E.push([]);if(i>0){const L=Math.hypot(q[0]-P[id-1][0],q[1]-P[id-1][1]);E[id].push([id-1,L]);E[id-1].push([id,L]);}const k=key(q[0],q[1]);let a=G.get(k);if(!a)G.set(k,a=[]);a.push(id);}));
+  const near=(x,z,lim)=>{let b=-1,bd=lim;const gx=Math.floor(x/4),gz=Math.floor(z/4),R=Math.ceil(lim/4);for(let dx=-R;dx<=R;dx++)for(let dz=-R;dz<=R;dz++){const a=G.get((gx+dx)+','+(gz+dz));if(a)for(const i of a){const d=Math.hypot(P[i][0]-x,P[i][1]-z);if(d<bd){bd=d;b=i;}}}return [b,bd];};
+  for(const [k,a] of G){const [gx,gz]=k.split(',').map(Number);for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++){const b=G.get((gx+dx)+','+(gz+dz));if(b)for(const i of a)for(const j of b)if(i<j){const d=Math.hypot(P[i][0]-P[j][0],P[i][1]-P[j][1]);if(d<3){E[i].push([j,d]);E[j].push([i,d]);}}}}
+  const dist=new Float64Array(P.length).fill(Infinity),done=new Uint8Array(P.length),[m0,md]=near(s.square.x,s.square.z,30);if(m0<0)return null;dist[m0]=md;
+  const H=[[md,m0]],push=e=>{H.push(e);let i=H.length-1;while(i>0){const p=(i-1)>>1;if(H[p][0]<=H[i][0])break;[H[p],H[i]]=[H[i],H[p]];i=p;}},pop=()=>{const t=H[0],l=H.pop();if(H.length){H[0]=l;let i=0;for(;;){const a=2*i+1,b=a+1;let m=i;if(a<H.length&&H[a][0]<H[m][0])m=a;if(b<H.length&&H[b][0]<H[m][0])m=b;if(m===i)break;[H[m],H[i]]=[H[i],H[m]];i=m;}}return t;};
+  while(H.length){const [d,i]=pop();if(done[i])continue;done[i]=1;for(const [j,L] of E[i])if(d+L<dist[j]){dist[j]=d+L;push([dist[j],j]);}}
+  const at=(x,z,lim)=>{const [i,d]=near(x,z,lim);return i<0?Infinity:dist[i]+d;};
+  const hs=s.boxes.filter(b=>b.kind==='house').map(b=>at(b.x,b.z,45)); // 房屋按自身中心就近上路（后排房屋离路可到 30 多米）
+  const g=s.gate?at(s.gate.x,s.gate.z,25):Infinity;
+  return {gate:g,hubs:(s.hubs||[]).map(h=>({type:h.type,d:at(h.x,h.z,15)})),houses:hs.length,within400:hs.filter(d=>d<=400).length,max:Math.max(0,...hs.filter(isFinite)),unreached:hs.filter(d=>!isFinite(d)).length};}
 function exportPlan(){const s=S.scene,k=castle(),centers=[{id:'castle',type:'城堡',x:r1(k.x),z:r1(k.z),r:k.r,locked:!!O.castle}];
   if(s&&s.gate)centers.push({id:'gate',type:'城门',x:r1(s.gate.x),z:r1(s.gate.z),locked:false});
   if(s&&s.square)centers.push({id:'market',type:'集市',x:r1(s.square.x),z:r1(s.square.z),r:s.square.r,locked:false});
-  (s?s.centers:[]).forEach((c,i)=>centers.push({id:'town'+(i+1),type:'城镇中心',x:r1(c.x),z:r1(c.z),r:r1(c.R),locked:false}));
+  for(const h of (s&&s.hubs)||[])centers.push({id:h.type==='码头'?'dock':'workshop',type:h.type,x:r1(h.x),z:r1(h.z),r:h.r,locked:false});
+  residential().forEach((c,i)=>centers.push({id:'home'+(i+1),type:'居住',x:r1(c.x),z:r1(c.z),r:r1(c.r),n:c.n,locked:false}));
   const arterials=(s?s.roads:[]).filter(r=>r.main).map((r,i)=>({id:'a'+(i+1),w:r.w,pts:r.pts.map(p=>[r1(p[0]),r1(p[1])]),locked:false}));
   return {version:PLAN_VER,params:{...P},overrides:{castle:O.castle?{x:O.castle.x,z:O.castle.z}:null},
     centers,arterials,zones:{cell:8,labels:null,painted:[]},fingerprint:sceneFingerprint(),savedAt:new Date().toISOString()};}
@@ -520,6 +545,7 @@ function importPlan(pl){
   if([1,2,3].includes(Number(q.walls))) np.walls=Number(q.walls);
   if([256,512,1024].includes(Number(q.size))) np.size=Number(q.size);
   if(['A','B','C'].includes(q.tg)) np.tg=q.tg;
+  np.mc=typeof q.mc==='boolean'?q.mc:false; // v0.11 存的规划图没有这一项：按单中心导入，保证重现原场景
   const oc=pl.overrides&&pl.overrides.castle;
   Object.assign(P,np); O.castle=(oc&&Number.isFinite(oc.x)&&Number.isFinite(oc.z))?{x:oc.x,z:oc.z}:null; O.snapped=false;
   generate(); const fp=sceneFingerprint();
@@ -556,7 +582,7 @@ $('plansave').onclick=()=>{try{localStorage.setItem('castle-plan',JSON.stringify
 $('planload').onclick=()=>{let t=null;try{t=localStorage.getItem('castle-plan');}catch(e){}if(!t){flash('本机还没有保存过规划图');return;}let r;try{r=importPlan(JSON.parse(t));}catch(e){r={ok:false,msg:'本机保存的规划图读不出来'};}flash(planMsg(r));};
 
 // 供验证环境调用的接口
-window.sim={planLabels:()=>PLAN_LABELS.slice(),exportPlan,importPlan,fingerprint:sceneFingerprint,generate,setMode,heightAt,setParams,castle,riverDist,isWater,resetCastle,
+window.sim={reach,residential,hubs:()=>({hubs:(S.scene&&S.scene.hubs)||[],miss:(S.scene&&S.scene.hubMiss)||[]}),planLabels:()=>PLAN_LABELS.slice(),exportPlan,importPlan,fingerprint:sceneFingerprint,generate,setMode,heightAt,setParams,castle,riverDist,isWater,resetCastle,
   setOverlay3D:b=>{S.overlay3d=!!b;refresh();}, overlayCount:()=>ovCount,
   scene:()=>{const s=S.scene;if(!s)return null;const n=k=>s.boxes.filter(b=>b.kind===k).length;return {houses:n('house'),walls:n('wall'),towers:n('tower'),keep:n('keep'),roads:s.roads.length,bridges:s.roads.filter(r=>r.deck.some(d=>d!==null)).length,people:s.people.length,fields:s.fields.length,gate:s.gate};},
   audit:()=>S.audit, sceneMs:()=>S.sceneMs, earth:()=>S.earth, baseAt,

@@ -262,6 +262,34 @@ function build(ctx){
         else ids.forEach(i=>{if(!S.roads[i].main)drop.add(i);});}
       S.roads=S.roads.filter((r,i)=>!drop.has(i)).concat(add);}
   }
+  // D1 多中心：在路网定型前自动放码头、作坊两个功能中心，并各修一条路从现有路网通过去（关掉“多中心”时完全跳过，结果与 v0.11 相同）
+  // 码头：离水边 5~15 米、岸坡 ≤12%、与集市同岸，离集市最近；作坊：下游（河水按由北向南流，z 更大）、离水 8~40 米、离城堡和集市都 ≥100 米、与集市同岸
+  S.hubs=[];S.hubMiss=[];
+  if(ctx.multi!==false&&SIZE<512)S.hubMiss.push('地块小于 512 米：不放码头和作坊（作坊要离城堡 100 米以上，放不下）');
+  else if(ctx.multi!==false){
+    const RPs=[];for(const r of S.roads)for(const q of r.pts)if(riverDist(q[0],q[1])>=BED+3)RPs.push(q); // 桥面上的点不能当起点（支路不能从河里出发）
+    const nearPt=(x,z)=>{let b=null,bd=1e9;for(const q of RPs){const e=Math.hypot(q[0]-x,q[1]-z);if(e<bd){bd=e;b=q;}}return [b,bd];};
+    const sl10=(x,z)=>{let m=0;const h=heightAt(x,z);for(let k=0;k<8;k++){const t=k/8*Math.PI*2;m=Math.max(m,Math.abs(heightAt(x+Math.cos(t)*10,z+Math.sin(t)*10)-h)/10);}return m;};
+    const sT=side(T[0],T[1]);
+    const link=hb=>{const L=RPs.filter(q=>side(q[0],q[1])===side(hb.x,hb.z)).map(q=>[q,Math.hypot(q[0]-hb.x,q[1]-hb.z)]).sort((a,b)=>a[1]-b[1]);if(!L.length)return false;if(L[0][1]<5){hb.link=0;return true;}
+      const starts=[];for(const c of L){if(starts.length>=8||c[1]>L[0][1]+120)break;if(starts.every(o=>Math.hypot(o[0][0]-c[0][0],o[0][1]-c[0][1])>=8))starts.push(c);}
+      for(const [q,dd] of starts){const n0=S.roads.length,r=makeRoad(q[0],q[1],Math.atan2(hb.z-q[1],hb.x-q[0]),dd*2.4+16,DIM.ROAD_W,false,[hb.x,hb.z]),e=r.pts[r.pts.length-1];
+        if(r.pts.length>1&&Math.hypot(e[0]-hb.x,e[1]-hb.z)<4){r.hub=hb.type;r.main=true;hb.link=Math.round((r.pts.length-1)*2);return true;}
+        if(S.roads.length>n0)S.roads.splice(S.roads.indexOf(r),1);}
+      return false;};
+    const rank=(ok,score)=>{const L=[];for(let z=12;z<=SIZE-12;z+=4)for(let x=12;x<=SIZE-12;x+=4){if(ok(x,z))L.push({x,z,v:score(x,z)});}return L.sort((a,b)=>b.v-a.v);};
+    const place=(type,r,L,why)=>{if(!L.length){S.hubMiss.push(type+'：'+why);return null;}let tried=0;const used=[];
+      for(const c of L){if(used.some(u=>Math.hypot(u.x-c.x,u.z-c.z)<12))continue;used.push(c);if(++tried>10)break;const hb={type,x:c.x,z:c.z,r};if(link(hb)){S.hubs.push(hb);return hb;}}
+      S.hubMiss.push(type+'：路修不过去');return null;};
+    if(riverX){ // 岸坡不再一刀切卡掉（河岸本来就是坡），改成打分：越平越好；中心本身会整平
+      const D=place('码头',7,rank((x,z)=>{const e=riverDist(x,z)-BED;return e>=5&&e<=15&&side(x,z)===sT&&Math.hypot(x-K.x,z-K.z)>=S.rOut+20&&Math.hypot(x-T[0],z-T[1])>=20&&sl10(x,z)<=0.6;},
+        (x,z)=>-Math.hypot(x-T[0],z-T[1])-sl10(x,z)*120),'同岸没有离水 5~15 米的地方');
+      const zMin=Math.max(K.z,T[1]);
+      place('作坊',9,rank((x,z)=>{const e=riverDist(x,z)-BED;return e>=8&&e<=40&&z>zMin+10&&side(x,z)===sT&&Math.hypot(x-K.x,z-K.z)>=100&&Math.hypot(x-T[0],z-T[1])>=100&&(!D||Math.hypot(x-D.x,z-D.z)>=30)&&sl10(x,z)<=0.3;},
+        (x,z)=>-nearPt(x,z)[1]*0.5-sl10(x,z)*120-Math.hypot(x-K.x,z-K.z)*0.05),'下游同岸没有离城堡、集市都 100 米以上的临水地');
+    } else S.hubMiss.push('无河：不放码头和作坊');
+    for(const hb of S.hubs)ed.disc(hb.x,hb.z,hb.r+0.5,heightAt(hb.x,hb.z),3);
+  }
   lap('路网');
   // 线形平滑：去掉逐步转向留下的折线（两端不动）
   for(const r of S.roads){const p=r.pts,wt=p.map(q=>riverDist(q[0],q[1])<BED+1.5);for(let it=0;it<3;it++){const q=p.map(v=>v.slice());for(let i=1;i<p.length-1;i++){q[i][0]=(p[i-1][0]+p[i][0]*2+p[i+1][0])/4;q[i][1]=(p[i-1][1]+p[i][1]*2+p[i+1][1])/4;}for(let i=1;i<p.length-1;i++)if(!wt[i]){p[i][0]=q[i][0];p[i][1]=q[i][1];}}} // 桥段（河道内的点）不参与平滑，保持直线
@@ -317,7 +345,7 @@ function build(ctx){
           const w=Math.max(4.5,W*k),d=Math.max(4,D*k),off=r.w/2+1.6+push+row*(D+2)+d/2;
           const b={kind:'house',x:p[i][0]+nx*side*off,z:p[i][1]+nz*side*off,w,d,yaw,row,ri},dc=Math.hypot(b.x-K.x,b.z-K.z),tn=tnorm(b.x,b.z);
           if(tn.far||dc<S.rOut+7){RJ.far++;continue;}
-          if(corners(b).concat([[b.x,b.z]]).some(q=>Math.hypot(q[0]-T[0],q[1]-T[1])<S.square.r+1.5)){RJ.square++;continue;}
+          if(corners(b).concat([[b.x,b.z]]).some(q=>Math.hypot(q[0]-T[0],q[1]-T[1])<S.square.r+1.5||S.hubs.some(h=>Math.hypot(q[0]-h.x,q[1]-h.z)<h.r+1.5))){RJ.square++;continue;}
           if(corners(b).some(q=>!inMap(q[0],q[1],1))){RJ.map++;continue;}if(wet(b,1.5)){RJ.wet++;continue;}
           b.sx=p[i][0]+nx*side*(r.w/2+0.5);b.sz=p[i][1]+nz*side*(r.w/2+0.5);
           const f=footprint(b).map(q=>heightAt(q[0],q[1])),mean=f.reduce((x,y)=>x+y,0)/f.length,dev=f.reduce((x,y)=>x+Math.abs(y-mean),0)/f.length;

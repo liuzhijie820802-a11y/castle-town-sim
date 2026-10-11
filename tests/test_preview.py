@@ -53,7 +53,7 @@ with sync_playwright() as p:
     pg.evaluate("sim.setParams({relief:1.3,river:false,town:'s',walls:1})")
     href = pg.evaluate("location.href"); hs = pg.evaluate(H3); kc = pg.evaluate("sim.castle()")
     pg.goto("about:blank"); pg.goto(href); pg.wait_for_timeout(800)
-    same = pg.evaluate("sim.params()") == {"seed":20261005,"relief":1.3,"river":False,"town":"s","walls":1,"size":256,"tg":"A"} and pg.evaluate(H3) == hs and pg.evaluate("sim.castle()") == kc
+    same = pg.evaluate("sim.params()") == {"seed":20261005,"relief":1.3,"river":False,"town":"s","walls":1,"size":256,"tg":"A","mc":True} and pg.evaluate(H3) == hs and pg.evaluate("sim.castle()") == kc
     check("网址可复现全部参数", same, href.split("#")[1])
 
     # ===== 人工覆盖：拖动城堡 =====
@@ -184,7 +184,7 @@ with sync_playwright() as p:
     pg.evaluate("()=>{sim.setParams({size:512,town:'m',tg:'A',relief:1});sim.generate(3);sim.setMode('2d')}"); pg.wait_for_timeout(300)
     pl = pg.evaluate("sim.exportPlan()")
     types = [c["type"] for c in pl["centers"]]
-    check("规划图包含城堡、城门、集市、城镇中心和主干道", all(t in types for t in ["城堡","城门","集市","城镇中心"]) and len(pl["arterials"]) > 0, f'中心 {len(pl["centers"])} 个（{"、".join(types)}），主干道 {len(pl["arterials"])} 条')
+    check("规划图包含城堡、城门、集市、居住中心和主干道", all(t in types for t in ["城堡","城门","集市","居住"]) and len(pl["arterials"]) > 0, f'中心 {len(pl["centers"])} 个（{"、".join(types)}），主干道 {len(pl["arterials"])} 条')
     fp0 = pl["fingerprint"]
     pg.evaluate("()=>{sim.setParams({size:256,tg:'C',town:'l'});sim.generate(99)}")
     fp_other = pg.evaluate("sim.fingerprint()")
@@ -206,6 +206,30 @@ with sync_playwright() as p:
     fp1 = pg.evaluate("sim.fingerprint()"); r3 = pg.evaluate("sim.importPlan({version:99})")
     check("版本不对的规划图被拒绝，场景不变", not r3["ok"] and pg.evaluate("sim.fingerprint()") == fp1, r3.get("msg",""))
     pg.evaluate("sim.resetCastle()")
+    # ===== 多中心（D1），先在 512 米验收：A/B/C 各 6 个种子 =====
+    d1 = pg.evaluate("""()=>{const o=[];for(const tg of ['A','B','C'])for(let sd=1;sd<=6;sd++){sim.setParams({size:512,town:'m',tg,relief:1,mc:true,river:true});sim.generate(sd);
+      const H=sim.hubs(),K=sim.castle(),q=S.scene.square,R=sim.reach(),a=sim.audit();
+      o.push({k:tg+sd,hubs:H.hubs.map(h=>({t:h.type,edge:sim.riverDist(h.x,h.z)-4,dK:Math.hypot(h.x-K.x,h.z-K.z),dM:Math.hypot(h.x-q.x,h.z-q.z),down:h.z>Math.max(K.z,q.z)})),miss:H.miss,
+        reach:R,audit:a.total,houses:sim.scene().houses});}return o}""")
+    dk = [r for r in d1 if any(h["t"]=="码头" for h in r["hubs"])]; wk = [r for r in d1 if any(h["t"]=="作坊" for h in r["hubs"])]
+    bad_dk = [r["k"] for r in dk for h in r["hubs"] if h["t"]=="码头" and not (5 <= h["edge"] <= 15.5)]
+    bad_wk = [r["k"] for r in wk for h in r["hubs"] if h["t"]=="作坊" and not (h["down"] and h["dK"] >= 100 and h["dM"] >= 100)]
+    check("码头离水边 5~15 米（512 米 18 个场景）", len(dk) >= 15 and not bad_dk, f"放成 {len(dk)}/18；不合格 {bad_dk}；没放成：" + "；".join(r["k"]+":"+",".join(r["miss"]) for r in d1 if r not in dk)[:300])
+    check("作坊在下游，离城堡、集市都 ≥100 米", len(wk) >= 12 and not bad_wk, f"放成 {len(wk)}/18；不合格 {bad_wk}")
+    unl = [r["k"]+h["type"] for r in d1 for h in r["reach"]["hubs"] if not h["d"] < 1e9]
+    check("每个功能中心都和城门路网连通", not unl and all(r["reach"]["gate"] < 1e9 for r in d1), f"连不上：{unl}")
+    tot = sum(r["reach"]["houses"] for r in d1); ok4 = sum(r["reach"]["within400"] for r in d1); mx = max(r["reach"]["max"] for r in d1)
+    check("房屋沿路走到集市都不超过 400 米", ok4 == tot, f"{ok4}/{tot} 栋，最远 {mx:.0f} 米")
+    check("多中心打开后硬规则全部满足", all(r["audit"] == 0 for r in d1), str([r["k"] for r in d1 if r["audit"]]))
+    pg.evaluate("()=>{sim.setParams({size:512,tg:'A',mc:false});sim.generate(3)}"); fo = pg.evaluate("sim.fingerprint()"); ho = pg.evaluate("sim.hubs().hubs.length")
+    pg.evaluate("()=>{sim.setParams({mc:true});sim.generate(3)}"); fm = pg.evaluate("sim.fingerprint()")
+    check("关掉多中心就回到单中心（没有码头作坊），打开后场景变化", ho == 0 and fo != fm)
+    pg.evaluate("()=>{sim.setParams({size:512,tg:'A',mc:true});sim.setMode('2d');sim.generate(1)}"); pg.wait_for_timeout(600)
+    px = pg.evaluate("""()=>{const v=S.view2d,c=document.getElementById('c2d').getContext('2d'),o=[];for(const h of sim.hubs().hubs){const d=c.getImageData(Math.round((v.ox+h.x*v.sc)*1),Math.round((v.oy+h.z*v.sc)*1),1,1).data;o.push([h.type,d[0],d[1],d[2]]);}return o}""")
+    want = {"码头":(74,168,255),"作坊":(200,120,74)}
+    okpx = len(px) == 2 and all(sum(abs(p[i+1]-want[p[0]][i]) for i in range(3)) < 90 for p in px)
+    check("2D 俯视里能看到码头、作坊的标记（读画面像素）", okpx, str(px))
+    pg.evaluate("()=>{sim.setParams({size:256,tg:'A',town:'m',mc:true});sim.generate(20261005)}")
     st = pg.evaluate("sim.state()")
     check("全程无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), "; ".join(l for l in logs if "pageerror" in l)[:200])
     b.close()
