@@ -16,7 +16,7 @@ html,body{margin:0;height:100%;background:#1b1d22;color:#e8e8e8;font-family:"Pin
 #status{margin-left:auto;font-size:12px;color:#9aa1b0}
 #view{position:absolute;top:49px;left:0;right:0;bottom:0}
 canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
-#hud{position:absolute;left:12px;bottom:12px;background:rgba(20,22,26,.82);padding:8px 12px;border-radius:4px;font-size:12px;line-height:1.7;color:#c9ced8;pointer-events:none}
+#hud{position:absolute;right:12px;bottom:58px;width:210px;max-height:calc(100vh - 420px);overflow-y:auto;box-sizing:border-box;background:rgba(20,22,26,.82);padding:8px 12px;border-radius:4px;font-size:12px;line-height:1.7;color:#c9ced8}
 #probe{position:absolute;right:12px;bottom:12px;background:rgba(20,22,26,.82);padding:8px 12px;border-radius:4px;font-size:12px;line-height:1.7;color:#c9ced8;pointer-events:none;min-width:160px}
 #panel{position:absolute;top:12px;left:12px;width:190px;background:rgba(20,22,26,.9);border:1px solid #353944;border-radius:6px;padding:10px 12px;font-size:13px;z-index:1}
 #panel .ph{font-weight:600;margin-bottom:6px;color:#e8c070}
@@ -27,6 +27,8 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
 #panel .sep{border-top:1px solid #353944;margin:10px 0}
 #panel button{width:100%;margin-top:6px;background:#363b47;border:1px solid #4a5060;color:#e8e8e8;padding:5px;border-radius:4px;cursor:pointer;font-size:12px}
 #panel button:disabled{opacity:.45;cursor:default}
+#panel .two{display:flex;gap:6px}
+#panel{max-height:calc(100vh - 40px);overflow-y:auto;box-sizing:border-box}
 #panel .tip{font-size:11px;color:#8a909c;margin-top:6px;line-height:1.5}
 #cmode.manual{color:#ffb347}
 #rulesbox{position:absolute;top:12px;right:12px;width:210px;background:rgba(20,22,26,.9);border:1px solid #353944;border-radius:6px;padding:10px 12px;font-size:12px;z-index:1;line-height:1.7}
@@ -53,6 +55,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
     <label>地形起伏 <span id="vRelief">1.0</span><input id="relief" type="range" min="0.5" max="1.5" step="0.1" value="1"></label>
     <label class="row"><input id="river" type="checkbox" checked> 有河流</label>
     <label class="row"><input id="showq" type="checkbox"> 标出路网问题（红圈）</label>
+    <label class="row"><input id="showplan" type="checkbox"> 显示规划图（中心、主干道）</label>
     <label>城镇规模<select id="town"><option value="s">小</option><option value="m" selected>中</option><option value="l">大</option></select></label>
     <label>城镇生长<select id="tg"><option value="A" selected>A 跟随城堡</option><option value="B">B 单中心</option><option value="C">C 多中心</option></select></label>
     <label>地块大小<select id="size"><option value="256" selected>256 米</option><option value="512">512 米</option><option value="1024">1024 米</option></select></label>
@@ -63,6 +66,10 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
     <div class="tip">在 2D 俯视里可以直接拖动城堡。手动位置在改参数、换种子后都会保留。</div>
     <button id="earth">显示挖填方</button>
     <button id="copy">复制当前设置链接</button>
+    <div class="sep"></div>
+    <div title="规划图保存参数、手动覆盖、中心和主干道；导入后完整重现保存时的场景">规划图</div>
+    <div class="two"><button id="planexp">导出</button><button id="planimp">导入</button></div><input id="planfile" type="file" accept=".json,application/json" style="display:none">
+    <div class="two"><button id="plansave">存到本机</button><button id="planload">本机读取</button></div>
   </div>
   <div id="rulesbox"><div class="ph">硬规则（运行时自动检查）</div><div id="rules"></div><div class="tip">软偏好（城堡偏高地、城镇在下坡、越近城堡越密）只是可调倾向，不算错误。</div></div>
   <div id="hud"></div>
@@ -385,6 +392,7 @@ function drawScene2D(ctx){const sn=S.scene,v=S.view2d;if(!sn||!window.SCENE)retu
   for(const b of sn.boxes){const c=b.kind==='house'?K.roof:(b.kind==='stall'?K.stallTop:K[b.kind]);poly(b,rgb(c),b.bad?'#ff3b3b':'rgba(0,0,0,0.35)',(b.bad?2.5:0.8)*d);}
   for(const p of sn.people){ctx.beginPath();ctx.arc(X(p.x),Y(p.z),Math.max(1.6*d,0.45*v.sc),0,Math.PI*2);ctx.fillStyle=p.bad?'#ff3b3b':rgb(K[p.role]);ctx.fill();}
   if($('showq')&&$('showq').checked&&sn.quality&&!S.preview){ctx.globalAlpha=1;ctx.lineWidth=2.5*d;ctx.font=(11*d)+'px sans-serif';for(const it of sn.quality.items){const R=Math.max(9*d,10*v.sc);ctx.strokeStyle='#ff2a2a';ctx.beginPath();ctx.arc(X(it.x),Y(it.z),R,0,7);ctx.stroke();ctx.fillStyle='#ff2a2a';ctx.fillText(it.id,X(it.x)+R+2,Y(it.z)+4*d);}}
+  if($('showplan')&&$('showplan').checked&&!S.preview) drawPlan(ctx,X,Y,d,v);
   ctx.restore();}
 function persp(fy,a,n,f){const t=1/Math.tan(fy/2);return [t/a,0,0,0,0,t,0,0,0,0,(f+n)/(n-f),-1,0,0,2*f*n/(n-f),0];}
 function lookAt(e,c,u){const sub=(p,q)=>[p[0]-q[0],p[1]-q[1],p[2]-q[2]],cr=(p,q)=>[p[1]*q[2]-p[2]*q[1],p[2]*q[0]-p[0]*q[2],p[0]*q[1]-p[1]*q[0]],nm=p=>{const l=Math.hypot(...p);return[p[0]/l,p[1]/l,p[2]/l];},dt=(p,q)=>p[0]*q[0]+p[1]*q[1]+p[2]*q[2];
@@ -453,7 +461,7 @@ function refresh(){ if(!S.heights) return;
     +(S.scene&&S.scene.grade?'<br>路面坡度 修正前平均 '+(S.scene.grade.baseMean*100).toFixed(0)+'% → 修正后 '+(S.scene.grade.mean*100).toFixed(0)+'%（'+Math.round(S.scene.grade.okFrac*100)+'% 路段不超过 12%）':'')
     +(S.scene&&S.scene.conn?'<br>城镇中心 '+S.scene.conn.centers+' 个 · 桥 '+S.scene.conn.bridges+' 座 · 连不上城门路网的房屋 '+S.scene.conn.isolated+' 栋':'')
     +(S.timing?'<br>生成耗时 '+Math.round(['terrain','water','site','build','audit','mesh','objects','map'].reduce((a,k)=>a+(S.timing[k]||0),0))+' 毫秒（场景 '+Math.round(S.timing.build||0)+'）':'')
-    +'<br><span style="color:#8a909c">主体雏形 v0.8：城堡自动避河，城镇生长方式 A/B/C 可切换</span>';
+    +'<br><span style="color:#8a909c">v0.11：规划图数据层（D0），可导出、导入、本机保存</span>';
   if(S.scene&&S.scene.quality){const q=S.scene.quality.cnt;$('hud').innerHTML+='<br>路网问题 '+S.scene.quality.total+'（桥 '+q.Q1+' · 桥太密 '+q.Q2+' · 平行贴路 '+q.Q3+' · 尖角 '+q.Q4+' · 短断头 '+q.Q5+'）';}
   if(S.audit) $('rules').innerHTML=SCENE.RULES.hard.map(r=>{const n=S.audit.cnt[r.id];return '<div class="'+(n?'ng':'ok')+'">'+(n?'✗ ':'✓ ')+r.name+(n?' ×'+n:'')+'</div>';}).join('');
   if(S.mode==='3d') $('probe').innerHTML='左键拖动：旋转<br>右键 / Shift+拖动：平移<br>滚轮：缩放'; else if(!/^X /.test($('probe').innerHTML)) $('probe').innerHTML='移动鼠标到地形上查看坐标';
@@ -488,8 +496,67 @@ $('earth').onclick=()=>{S.showEarth=!S.showEarth;$('earth').textContent=S.showEa
 $('copy').onclick=()=>{if(navigator.clipboard)navigator.clipboard.writeText(location.href).then(()=>flash('链接已复制'),()=>flash('复制失败，请直接复制地址栏'));else flash('请直接复制地址栏');};
 window.addEventListener('resize',refresh);
 
+// ===== 规划图（D0）：把当前结果整理成可保存、可导入的数据。外观不变；同一份规划图必定重现同一场景 =====
+const PLAN_VER=1, PLAN_COL={'城堡':'#9aa0b4','城门':'#f2f2f2','集市':'#f0a020','城镇中心':'#5cc06a'};
+const r1=v=>Math.round(v*10)/10;
+function sceneFingerprint(){const s=S.scene;if(!s)return '';let h=2166136261;const add=t=>{t=String(t);for(let i=0;i<t.length;i++){h^=t.charCodeAt(i);h=Math.imul(h,16777619);}};
+  for(const b of s.boxes)add(b.kind+b.x.toFixed(2)+','+b.z.toFixed(2)+','+b.w.toFixed(2)+'|');
+  for(const r of s.roads){for(const p of r.pts)add(p[0].toFixed(2)+','+p[1].toFixed(2));add('/');}
+  add('p'+s.people.length+'f'+s.fields.length);return (h>>>0).toString(16).padStart(8,'0');}
+function exportPlan(){const s=S.scene,k=castle(),centers=[{id:'castle',type:'城堡',x:r1(k.x),z:r1(k.z),r:k.r,locked:!!O.castle}];
+  if(s&&s.gate)centers.push({id:'gate',type:'城门',x:r1(s.gate.x),z:r1(s.gate.z),locked:false});
+  if(s&&s.square)centers.push({id:'market',type:'集市',x:r1(s.square.x),z:r1(s.square.z),r:s.square.r,locked:false});
+  (s?s.centers:[]).forEach((c,i)=>centers.push({id:'town'+(i+1),type:'城镇中心',x:r1(c.x),z:r1(c.z),r:r1(c.R),locked:false}));
+  const arterials=(s?s.roads:[]).filter(r=>r.main).map((r,i)=>({id:'a'+(i+1),w:r.w,pts:r.pts.map(p=>[r1(p[0]),r1(p[1])]),locked:false}));
+  return {version:PLAN_VER,params:{...P},overrides:{castle:O.castle?{x:O.castle.x,z:O.castle.z}:null},
+    centers,arterials,zones:{cell:8,labels:null,painted:[]},fingerprint:sceneFingerprint(),savedAt:new Date().toISOString()};}
+function importPlan(pl){
+  if(!pl||typeof pl!=='object'||pl.version!==PLAN_VER) return {ok:false,msg:'这个规划图的版本不对，没有导入'};
+  const q=pl.params||{},np={...P};
+  if(Number.isFinite(Number(q.seed))) np.seed=Math.floor(Number(q.seed));
+  if(Number.isFinite(Number(q.relief))) np.relief=clamp(Number(q.relief),0.5,1.5);
+  if(typeof q.river==='boolean') np.river=q.river;
+  if(TOWN[q.town]) np.town=q.town;
+  if([1,2,3].includes(Number(q.walls))) np.walls=Number(q.walls);
+  if([256,512,1024].includes(Number(q.size))) np.size=Number(q.size);
+  if(['A','B','C'].includes(q.tg)) np.tg=q.tg;
+  const oc=pl.overrides&&pl.overrides.castle;
+  Object.assign(P,np); O.castle=(oc&&Number.isFinite(oc.x)&&Number.isFinite(oc.z))?{x:oc.x,z:oc.z}:null; O.snapped=false;
+  generate(); const fp=sceneFingerprint();
+  return {ok:true,same:pl.fingerprint?fp===pl.fingerprint:null,fingerprint:fp};}
+function planMsg(r){return !r.ok?r.msg:(r.same===false?'已导入，但场景和保存时不同（生成程序已更新过）':'已导入规划图，场景与保存时一致');}
+const PLAN_LABELS=[];
+function drawPlan(ctx,X,Y,d,v){const pl=exportPlan();ctx.save();ctx.globalAlpha=1;ctx.textAlign='left';ctx.textBaseline='alphabetic';
+  const lab=new Map();for(const c of pl.centers){const k=pl.centers.find(o=>Math.hypot(o.x-c.x,o.z-c.z)<8);(lab.get(k)||lab.set(k,[]).get(k)).push(c.type);}ctx.lineCap='round';ctx.lineJoin='round';
+  for(const a of pl.arterials){ctx.strokeStyle='rgba(255,150,40,0.85)';ctx.lineWidth=Math.max(3*d,(a.w+3)*v.sc);ctx.setLineDash([8*d,6*d]);ctx.beginPath();a.pts.forEach((p,i)=>i?ctx.lineTo(X(p[0]),Y(p[1])):ctx.moveTo(X(p[0]),Y(p[1])));ctx.stroke();}
+  ctx.setLineDash([6*d,5*d]);ctx.font='bold '+(13*d)+'px sans-serif';
+  for(const c of pl.centers){const col=PLAN_COL[c.type]||'#fff';
+    if(c.r&&c.type!=='集市'){ctx.strokeStyle=col;ctx.lineWidth=2*d;ctx.beginPath();ctx.arc(X(c.x),Y(c.z),c.r*v.sc,0,Math.PI*2);ctx.stroke();}
+    ctx.setLineDash([]);ctx.beginPath();ctx.arc(X(c.x),Y(c.z),6*d,0,Math.PI*2);ctx.fillStyle=col;ctx.fill();ctx.lineWidth=2*d;ctx.strokeStyle='#222';ctx.stroke();
+    ctx.setLineDash([6*d,5*d]);}
+  ctx.setLineDash([]);
+  const k=castle(),hit=(a,b)=>!(a.x2<=b.x1||b.x2<=a.x1||a.y2<=b.y1||b.y2<=a.y1),boxes=[];
+  {ctx.font=(12*d)+'px sans-serif';const t='城堡（'+(k.manual?'手动':'自动')+(k.inWater?'·压到河道':'')+'）',w=ctx.measureText(t).width,cx=X(k.x),ly=Y(k.z)-k.r*v.sc-8*d;boxes.push({x1:cx-w/2-5*d,x2:cx+w/2+5*d,y1:ly-13*d,y2:ly+5*d,t:'城堡框'});}
+  for(const c of pl.centers)boxes.push({x1:X(c.x)-7*d,x2:X(c.x)+7*d,y1:Y(c.z)-7*d,y2:Y(c.z)+7*d,t:'点'});
+  ctx.font='bold '+(13*d)+'px sans-serif';PLAN_LABELS.length=0;
+  for(const c of pl.centers){if(!lab.has(c))continue;const t=lab.get(c).join(' · '),w=ctx.measureText(t).width,h=15*d,px=X(c.x),py=Y(c.z);
+    const cand=[[9,-8],[9,18],[-9-w/d,-8],[-9-w/d,18]];for(let i=1;i<=6;i++)cand.push([9,18+i*16],[9,-8-i*16],[-9-w/d,18+i*16],[-9-w/d,-8-i*16]);
+    let best=null;for(const[ox,oy]of cand){const bx={x1:px+ox*d-2*d,x2:px+ox*d+w+2*d,y1:py+oy*d-h+2*d,y2:py+oy*d+4*d};if(!boxes.some(o=>hit(o,bx))){best=[ox,oy,bx];break;}}
+    if(!best){const[ox,oy]=cand[0];best=[ox,oy,{x1:px+ox*d,x2:px+ox*d+w,y1:py+oy*d-h,y2:py+oy*d}];}
+    const[ox,oy,bx]=best,tx=px+ox*d,ty=py+oy*d;boxes.push(Object.assign(bx,{t}));PLAN_LABELS.push({t,x1:bx.x1/d,x2:bx.x2/d,y1:bx.y1/d,y2:bx.y2/d});
+    if(Math.abs(oy)>20){ctx.strokeStyle='rgba(255,255,255,0.7)';ctx.lineWidth=1*d;ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(ox>0?tx:tx+w,ty-5*d);ctx.stroke();}
+    ctx.lineWidth=4*d;ctx.strokeStyle='rgba(0,0,0,0.75)';ctx.strokeText(t,tx,ty);ctx.fillStyle='#fff';ctx.fillText(t,tx,ty);}
+  ctx.setLineDash([]);const t='规划图：中心 '+pl.centers.length+' 个 · 主干道 '+pl.arterials.length+' 条 · 分区（D2 加入）';
+  ctx.font=(12*d)+'px sans-serif';ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(v.ox+6*d,v.oy+6*d,ctx.measureText(t).width+12*d,20*d);ctx.fillStyle='#fff';ctx.fillText(t,v.ox+12*d,v.oy+20*d);ctx.restore();}
+$('showplan').onchange=()=>refresh();
+$('planexp').onclick=()=>{const b=new Blob([JSON.stringify(exportPlan(),null,1)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='规划图-种子'+P.seed+'.json';document.body.appendChild(a);a.click();a.remove();flash('规划图已导出');};
+$('planimp').onclick=()=>$('planfile').click();
+$('planfile').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{let r;try{r=importPlan(JSON.parse(t));}catch(err){r={ok:false,msg:'文件读不出来，没有导入'};}e.target.value='';flash(planMsg(r));});};
+$('plansave').onclick=()=>{try{localStorage.setItem('castle-plan',JSON.stringify(exportPlan()));flash('规划图已保存到本机浏览器');}catch(e){flash('本机保存失败');}};
+$('planload').onclick=()=>{let t=null;try{t=localStorage.getItem('castle-plan');}catch(e){}if(!t){flash('本机还没有保存过规划图');return;}let r;try{r=importPlan(JSON.parse(t));}catch(e){r={ok:false,msg:'本机保存的规划图读不出来'};}flash(planMsg(r));};
+
 // 供验证环境调用的接口
-window.sim={generate,setMode,heightAt,setParams,castle,riverDist,isWater,resetCastle,
+window.sim={planLabels:()=>PLAN_LABELS.slice(),exportPlan,importPlan,fingerprint:sceneFingerprint,generate,setMode,heightAt,setParams,castle,riverDist,isWater,resetCastle,
   setOverlay3D:b=>{S.overlay3d=!!b;refresh();}, overlayCount:()=>ovCount,
   scene:()=>{const s=S.scene;if(!s)return null;const n=k=>s.boxes.filter(b=>b.kind===k).length;return {houses:n('house'),walls:n('wall'),towers:n('tower'),keep:n('keep'),roads:s.roads.length,bridges:s.roads.filter(r=>r.deck.some(d=>d!==null)).length,people:s.people.length,fields:s.fields.length,gate:s.gate};},
   audit:()=>S.audit, sceneMs:()=>S.sceneMs, earth:()=>S.earth, baseAt,
