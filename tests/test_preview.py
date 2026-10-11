@@ -89,6 +89,16 @@ with sync_playwright() as p:
     check("城堡拖进河里时，自动滑到最近的合法位置（不压河道）", not k5["inWater"] and au2["cnt"]["H2"]==0 and "避开河道" in pg.inner_text("#cmode") and d5 < 60, f'从 ({rp[0]},{rp[1]}) 移到 ({k5["x"]:.0f},{k5["z"]:.0f})，移动 {d5:.0f} 米，压河道 {au2["cnt"]["H2"]} 处')
     shot(pg, "shot_scene_bad.png")
     pg.evaluate("sim.resetCastle()")
+    for sz in (256, 512):
+        pg.evaluate(f"()=>{{document.getElementById('showplan').checked=true;sim.setParams({{size:{sz}}});}}"); pg.wait_for_timeout(300)
+        L = pg.evaluate("sim.planLabels()")
+        bad = [(x["t"], y["t"]) for i, x in enumerate(L) for y in L[i+1:] if not (x["x2"] <= y["x1"] or y["x2"] <= x["x1"] or x["y2"] <= y["y1"] or y["y2"] <= x["y1"])]
+        check(f"规划图标签互不重叠（{sz} 米）", len(L) >= 2 and not bad, json.dumps({"标签": [l["t"] for l in L], "重叠": bad}, ensure_ascii=False))
+    pg.evaluate("()=>{document.getElementById('showplan').checked=false;sim.setParams({size:256});}")
+    ov = pg.evaluate("""()=>{const r=id=>document.getElementById(id).getBoundingClientRect();const X=(a,b)=>!(a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top);
+      const P=r('panel'),H=r('hud'),R=r('rulesbox'),Q=r('probe');
+      return {面板压信息栏:X(P,H),信息栏压硬规则:X(H,R),信息栏压坐标:X(H,Q),面板底:Math.round(P.bottom),信息栏底:Math.round(H.bottom),窗口高:innerHeight}}""")
+    check("面板、信息栏、硬规则框、坐标框互不遮挡，且都在窗口内", not (ov["面板压信息栏"] or ov["信息栏压硬规则"] or ov["信息栏压坐标"]) and ov["面板底"] <= ov["窗口高"] and ov["信息栏底"] <= ov["窗口高"], json.dumps(ov, ensure_ascii=False))
     check("恢复自动选址后重新全部满足", pg.evaluate("sim.audit().total")==0)
     # ===== v0.6：分布随地形、城镇修正地形 =====
     pg.evaluate("sim.generate(20261005)")
@@ -170,6 +180,32 @@ with sync_playwright() as p:
     pb = pg.evaluate("()=>{const c=document.getElementById('c2d');return c.toDataURL().length}")
     pg.click("#showq"); pg.wait_for_timeout(200)
     check("页面显示路网问题数，勾选后画出红圈", "路网问题" in hud and pa != pb, hud[hud.find('路网问题'):][:60])
+    # ===== 规划图（D0）=====
+    pg.evaluate("()=>{sim.setParams({size:512,town:'m',tg:'A',relief:1});sim.generate(3);sim.setMode('2d')}"); pg.wait_for_timeout(300)
+    pl = pg.evaluate("sim.exportPlan()")
+    types = [c["type"] for c in pl["centers"]]
+    check("规划图包含城堡、城门、集市、城镇中心和主干道", all(t in types for t in ["城堡","城门","集市","城镇中心"]) and len(pl["arterials"]) > 0, f'中心 {len(pl["centers"])} 个（{"、".join(types)}），主干道 {len(pl["arterials"])} 条')
+    fp0 = pl["fingerprint"]
+    pg.evaluate("()=>{sim.setParams({size:256,tg:'C',town:'l'});sim.generate(99)}")
+    fp_other = pg.evaluate("sim.fingerprint()")
+    r = pg.evaluate("p=>sim.importPlan(p)", pl)
+    check("换过参数和种子后导入规划图，场景完全恢复", fp_other != fp0 and r["ok"] and r["same"] and pg.evaluate("sim.fingerprint()") == fp0 and pg.evaluate("sim.params().seed") == 3 and pg.evaluate("sim.params().size") == 512, json.dumps(r, ensure_ascii=False))
+    k = pg.evaluate("sim.castle()"); pg.evaluate(f"sim.setCastle({k['x']+25},{k['z']+12})")
+    pl2 = pg.evaluate("sim.exportPlan()"); k1 = pg.evaluate("sim.castle()")
+    pg.evaluate("()=>{sim.resetCastle();sim.generate(5)}")
+    r2 = pg.evaluate("p=>sim.importPlan(p)", pl2); k2 = pg.evaluate("sim.castle()")
+    check("手动移动过的城堡随规划图保存和恢复", r2["ok"] and r2["same"] and k2["manual"] and abs(k2["x"]-k1["x"]) < 0.01 and abs(k2["z"]-k1["z"]) < 0.01, f'({k1["x"]:.1f},{k1["z"]:.1f}) → ({k2["x"]:.1f},{k2["z"]:.1f})')
+    pg.click("#plansave"); pg.evaluate("()=>{sim.resetCastle();sim.generate(8)}"); pg.click("#planload"); pg.wait_for_timeout(300)
+    check("保存到本机后能读回同一场景", pg.evaluate("sim.fingerprint()") == pl2["fingerprint"] and pg.evaluate("sim.castle().manual"))
+    pa = pg.evaluate("()=>document.getElementById('c2d').toDataURL().length")
+    pg.click("#showplan"); pg.wait_for_timeout(300); shot(pg, "shot_plan.png")
+    pb = pg.evaluate("()=>document.getElementById('c2d').toDataURL().length")
+    pg.click("#showplan"); pg.wait_for_timeout(300)
+    pc = pg.evaluate("()=>document.getElementById('c2d').toDataURL().length")
+    check("规划图图层开关有效（打开画出中心和主干道，关掉恢复原样）", pa != pb and pc == pa, f"{pa} → {pb} → {pc}")
+    fp1 = pg.evaluate("sim.fingerprint()"); r3 = pg.evaluate("sim.importPlan({version:99})")
+    check("版本不对的规划图被拒绝，场景不变", not r3["ok"] and pg.evaluate("sim.fingerprint()") == fp1, r3.get("msg",""))
+    pg.evaluate("sim.resetCastle()")
     st = pg.evaluate("sim.state()")
     check("全程无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), "; ".join(l for l in logs if "pageerror" in l)[:200])
     b.close()
