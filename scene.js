@@ -450,6 +450,39 @@ function build(ctx){
   S.roads.forEach((r,k)=>{const n=r.pts.length,len=(n-1)*2;if(r.main||len>=14)return;if(!(nearOther(r.pts[0],k)&&nearOther(r.pts[n-1],k))){const m=r.pts[n>>1];qa('Q5',m[0],m[1],'短断头路 '+len+' 米');}});
   Q.total=Object.values(Q.cnt).reduce((a,b)=>a+b,0);S.quality=Q;
   lap('统计');S.timing=tm;
+  // D2 分区（只算、不改场景）：8 米一格，按“到各中心的加权距离”归属六类分区；河道、陡坡（>25%）是天然边界；分区不跨河（桥头 20 米内除外）
+  // 城堡=城墙范围；集市/码头/作坊=各自中心附近（集市 40 米、码头 28 米、作坊 40 米，按距离÷半径取最近）；居住=建成区里其余部分，归最近的同岸居住中心；农业区=建成区外的可建地（面积配套在后面一步做）
+  if(ctx.zones!==false){const ZC=8,ZN=Math.ceil(SIZE/ZC),lab=new Array(ZN*ZN).fill(0),own=new Array(ZN*ZN).fill(-1),NAMES=['不可建','城堡','集市','码头','作坊','居住','农业区'];
+    const HG=new Map(),hsZ=S.boxes.filter(o=>o.kind==='house');for(const h of hsZ){const k=Math.floor(h.x/16)+','+Math.floor(h.z/16);let L=HG.get(k);if(!L)HG.set(k,L=[]);L.push(h);}
+    const nearH=(x,z)=>{let d=1e9;const gx=Math.floor(x/16),gz=Math.floor(z/16);for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++){const L=HG.get((gx+dx)+','+(gz+dz));if(L)for(const h of L)d=Math.min(d,Math.hypot(h.x-x,h.z-z));}return d;};
+    const heads=[];for(const r of S.roads){const p=r.pts;for(let i=0;i<p.length;i++){if(r.deck[i]!==null)continue;if((i>0&&r.deck[i-1]!==null)||(i<p.length-1&&r.deck[i+1]!==null))heads.push(p[i]);}}
+    const nearHead=(x,z)=>heads.some(q=>Math.hypot(q[0]-x,q[1]-z)<=20);
+    const slope=(x,z)=>{const e=4;return Math.hypot((heightAt(x+e,z)-heightAt(x-e,z))/(2*e),(heightAt(x,z+e)-heightAt(x,z-e))/(2*e));};
+    const sp=[];if(T)sp.push({t:2,x:T[0],z:T[1],R:40,id:-1});S.hubs.forEach((h,i)=>sp.push({t:h.type==='码头'?3:4,x:h.x,z:h.z,R:h.type==='码头'?28:40,id:i}));
+    const res=S.centers.map(c=>({x:c.x,z:c.z,R:c.R}));
+    { // 某一岸有房屋却没有居住中心（例如 A 方式城镇跨过河）：在这一岸房屋的重心补一个居住中心，保证分区不跨河
+      const bySide=new Map();for(const h of hsZ){const sd=side(h.x,h.z);let L=bySide.get(sd);if(!L)bySide.set(sd,L=[]);L.push(h);}
+      for(const [sd,L] of bySide){if(res.some(c=>side(c.x,c.z)===sd))continue;const x=L.reduce((a,h)=>a+h.x,0)/L.length,z=L.reduce((a,h)=>a+h.z,0)/L.length;res.push({x,z,R:0,virt:true});}}
+    res.forEach((c,i)=>c.i=i);
+    const area=NAMES.map(()=>0);let buildable=0,unzoned=0,cross=0;
+    for(let j=0;j<ZN;j++)for(let i=0;i<ZN;i++){const k=j*ZN+i,x=Math.min(SIZE,i*ZC+ZC/2),z=Math.min(SIZE,j*ZC+ZC/2);
+      if(riverDist(x,z)<BED){lab[k]=0;continue;}
+      if(Math.hypot(x-K.x,z-K.z)<S.rOut){lab[k]=1;}
+      else if(slope(x,z)>0.25&&nearH(x,z)>6){lab[k]=0;continue;} // 格子里已经建了房屋的不算陡坡（地基已整平）
+      else{const sd=side(x,z),hd=nearHead(x,z),ok=c=>hd||side(c.x,c.z)===sd;let b=null,bv=1;
+        for(const c of sp){if(!ok(c))continue;const v=Math.hypot(x-c.x,z-c.z)/c.R;if(v<bv){bv=v;b=c;}}
+        if(b){lab[k]=b.t;own[k]=b.id;}
+        else{let rb=null,rv=1e9,inR=false;for(const c of res){if(!ok(c))continue;const d=Math.hypot(x-c.x,z-c.z),v=d/(c.R+10);if(d<=c.R)inR=true;if(v<rv){rv=v;rb=c;}}
+          if(rb&&(inR||nearH(x,z)<=14)){lab[k]=5;own[k]=rb.i;}else lab[k]=6;}}
+      buildable++;area[lab[k]]+=ZC*ZC;}
+    // 自查：可建地是否都有分区、城镇分区是否跨河（桥头 20 米内除外）、房屋是否都落在城镇分区（集市/码头/作坊/居住）里
+    for(let j=0;j<ZN;j++)for(let i=0;i<ZN;i++){const k=j*ZN+i,x=Math.min(SIZE,i*ZC+ZC/2),z=Math.min(SIZE,j*ZC+ZC/2),L=lab[k];
+      if(L===0&&riverDist(x,z)>=BED&&(slope(x,z)<=0.25||nearH(x,z)<=6)&&Math.hypot(x-K.x,z-K.z)>=S.rOut)unzoned++;
+      if(L>=2&&L<=5&&!nearHead(x,z)){const c=L===5?res[own[k]]:sp.find(o=>o.t===L&&o.id===own[k]);if(c&&side(c.x,c.z)!==side(x,z))cross++;}}
+    const hz=NAMES.map(()=>0);for(const h of hsZ){const i=Math.min(ZN-1,Math.floor(h.x/ZC)),j=Math.min(ZN-1,Math.floor(h.z/ZC));hz[lab[j*ZN+i]]++;}
+    S.zones={cell:ZC,n:ZN,lab,own,names:NAMES,area:Object.fromEntries(NAMES.map((n,i)=>[n,area[i]])),buildable,unzoned,cross,
+      housesIn:Object.fromEntries(NAMES.map((n,i)=>[n,hz[i]])),housesTown:hz[2]+hz[3]+hz[4]+hz[5],houses:hsZ.length,resCenters:res.map(c=>({x:Math.round(c.x),z:Math.round(c.z),virt:!!c.virt}))};
+    lap('分区');}
   return S;}
 
 function audit(S,ctx){

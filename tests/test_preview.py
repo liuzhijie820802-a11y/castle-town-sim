@@ -229,6 +229,25 @@ with sync_playwright() as p:
     want = {"码头":(74,168,255),"作坊":(200,120,74)}
     okpx = len(px) == 2 and all(sum(abs(p[i+1]-want[p[0]][i]) for i in range(3)) < 90 for p in px)
     check("2D 俯视里能看到码头、作坊的标记（读画面像素）", okpx, str(px))
+    # ===== 分区（D2 第一步），512 米 A/B/C 各 6 个种子 =====
+    zr = pg.evaluate("""()=>{const o=[];for(const tg of ['A','B','C'])for(let sd=1;sd<=6;sd++){sim.setParams({size:512,town:'m',tg,relief:1,mc:true,river:true});sim.generate(sd);const z=sim.zones(),H=sim.hubs().hubs;
+      o.push({k:tg+sd,ok:!!z,b:z?z.buildable:0,un:z?z.unzoned:-1,cr:z?z.cross:-1,hT:z?z.housesTown:0,h:z?z.houses:-1,a:z?z.area:{},hubs:H.map(h=>h.type)});}return o}""")
+    badz = [r["k"]+f'(未分区 {r["un"]}，跨河 {r["cr"]})' for r in zr if not r["ok"] or r["un"] != 0 or r["cr"] != 0]
+    check("分区完整：可建地全部有分区，城镇分区不跨河（桥头 20 米内除外）（512 米 18 个场景）", len(zr) == 18 and not badz, f'{len(zr)} 个场景，可建格平均 {sum(r["b"] for r in zr)/max(1,len(zr)):.0f} 个；不合格 {badz}')
+    badh = [r["k"]+f'({r["hT"]}/{r["h"]})' for r in zr if r["hT"] != r["h"]]
+    check("房屋全部落在城镇分区里（集市、码头、作坊、居住）", not badh, f'不合格 {badh}' if badh else f'{sum(r["h"] for r in zr)} 栋全部在城镇分区')
+    need = lambda r: ["城堡","集市","居住","农业区"] + [t for t in ["码头","作坊"] if t in r["hubs"]]
+    badk = [r["k"]+":"+",".join(t for t in need(r) if not r["a"].get(t)) for r in zr if any(not r["a"].get(t) for t in need(r))]
+    check("每个场景都有城堡、集市、居住、农业区分区，放了码头/作坊的也有对应分区", not badk, f'缺分区 {badk}')
+    pg.evaluate("()=>{sim.setParams({size:512,tg:'A',mc:true});sim.setMode('2d');sim.generate(1)}"); pg.wait_for_timeout(500)
+    fz0 = pg.evaluate("sim.fingerprint()"); za = pg.evaluate("()=>document.getElementById('c2d').toDataURL().length")
+    pg.click("#showzone"); pg.wait_for_timeout(400); shot(pg, "shot_zones.png")
+    zb = pg.evaluate("()=>document.getElementById('c2d').toDataURL().length")
+    pg.click("#showzone"); pg.wait_for_timeout(400)
+    zc = pg.evaluate("()=>document.getElementById('c2d').toDataURL().length")
+    check("分区图层开关有效（打开画出色块，关掉恢复原样，场景不变）", za != zb and zc == za and pg.evaluate("sim.fingerprint()") == fz0, f"{za} → {zb} → {zc}")
+    zp = pg.evaluate("()=>{const p=sim.exportPlan().zones;return {n:p.n,len:p.labels?p.labels.length:0}}")
+    check("规划图导出包含分区（8 米一格）", zp["n"] > 0 and zp["len"] == zp["n"]*zp["n"], json.dumps(zp))
     pg.evaluate("()=>{sim.setParams({size:256,tg:'A',town:'m',mc:true});sim.generate(20261005)}")
     st = pg.evaluate("sim.state()")
     check("全程无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), "; ".join(l for l in logs if "pageerror" in l)[:200])

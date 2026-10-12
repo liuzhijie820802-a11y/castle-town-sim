@@ -56,6 +56,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
     <label class="row"><input id="river" type="checkbox" checked> 有河流</label>
     <label class="row"><input id="showq" type="checkbox"> 标出路网问题（红圈）</label>
     <label class="row"><input id="showplan" type="checkbox"> 显示规划图（中心、主干道）</label>
+    <label class="row" title="六类分区色块：城堡、集市、码头、作坊、居住、农业区（8 米一格）"><input id="showzone" type="checkbox"> 显示分区（六类色块）</label>
     <label class="row" title="自动放码头、作坊，并各修一条路过去；关掉就是单中心（v0.11 的结果）"><input id="mc" type="checkbox" checked> 多中心（码头、作坊）</label>
     <label>城镇规模<select id="town"><option value="s">小</option><option value="m" selected>中</option><option value="l">大</option></select></label>
     <label>城镇生长<select id="tg"><option value="A" selected>A 跟随城堡</option><option value="B">B 单中心</option><option value="C">C 多中心</option></select></label>
@@ -392,6 +393,7 @@ function drawScene2D(ctx){const sn=S.scene,v=S.view2d;if(!sn||!window.SCENE)retu
   if(sn.square){ctx.fillStyle=rgb(K.square);ctx.beginPath();ctx.arc(X(sn.square.x),Y(sn.square.z),sn.square.r*v.sc,0,Math.PI*2);ctx.fill();}
   for(const b of sn.boxes){const c=b.kind==='house'?K.roof:(b.kind==='stall'?K.stallTop:K[b.kind]);poly(b,rgb(c),b.bad?'#ff3b3b':'rgba(0,0,0,0.35)',(b.bad?2.5:0.8)*d);}
   for(const p of sn.people){ctx.beginPath();ctx.arc(X(p.x),Y(p.z),Math.max(1.6*d,0.45*v.sc),0,Math.PI*2);ctx.fillStyle=p.bad?'#ff3b3b':rgb(K[p.role]);ctx.fill();}
+  if($('showzone')&&$('showzone').checked&&sn.zones&&!S.preview) drawZones(ctx,X,Y,d,v,sn.zones);
   if(P.mc&&sn.hubs&&sn.hubs.length){ctx.globalAlpha=1;ctx.font='bold '+(12*d)+'px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
     for(const h of sn.hubs){const cx=X(h.x),cy=Y(h.z),R=Math.max(7*d,h.r*v.sc),col=PLAN_COL[h.type]||'#fff';
       ctx.beginPath();ctx.arc(cx,cy,R,0,Math.PI*2);ctx.fillStyle=col;ctx.globalAlpha=0.85;ctx.fill();ctx.globalAlpha=1;ctx.lineWidth=2*d;ctx.strokeStyle='#fff';ctx.stroke();
@@ -506,6 +508,7 @@ $('copy').onclick=()=>{if(navigator.clipboard)navigator.clipboard.writeText(loca
 window.addEventListener('resize',refresh);
 
 // ===== 规划图（D0）：把当前结果整理成可保存、可导入的数据。外观不变；同一份规划图必定重现同一场景 =====
+const ZONE_COL=[null,'#9aa0b4','#f0a020','#4aa8ff','#c8784a','#5cc06a','#e8d24a'];
 const PLAN_VER=1, PLAN_COL={'城堡':'#9aa0b4','城门':'#f2f2f2','集市':'#f0a020','居住':'#5cc06a','码头':'#4aa8ff','作坊':'#c8784a'};
 const r1=v=>Math.round(v*10)/10;
 function sceneFingerprint(){const s=S.scene;if(!s)return '';let h=2166136261;const add=t=>{t=String(t);for(let i=0;i<t.length;i++){h^=t.charCodeAt(i);h=Math.imul(h,16777619);}};
@@ -534,7 +537,7 @@ function exportPlan(){const s=S.scene,k=castle(),centers=[{id:'castle',type:'城
   residential().forEach((c,i)=>centers.push({id:'home'+(i+1),type:'居住',x:r1(c.x),z:r1(c.z),r:r1(c.r),n:c.n,locked:false}));
   const arterials=(s?s.roads:[]).filter(r=>r.main).map((r,i)=>({id:'a'+(i+1),w:r.w,pts:r.pts.map(p=>[r1(p[0]),r1(p[1])]),locked:false}));
   return {version:PLAN_VER,params:{...P},overrides:{castle:O.castle?{x:O.castle.x,z:O.castle.z}:null},
-    centers,arterials,zones:{cell:8,labels:null,painted:[]},fingerprint:sceneFingerprint(),savedAt:new Date().toISOString()};}
+    centers,arterials,zones:{cell:8,n:s&&s.zones?s.zones.n:0,labels:s&&s.zones?s.zones.lab.join(''):null,names:s&&s.zones?s.zones.names:null,painted:[]},fingerprint:sceneFingerprint(),savedAt:new Date().toISOString()};}
 function importPlan(pl){
   if(!pl||typeof pl!=='object'||pl.version!==PLAN_VER) return {ok:false,msg:'这个规划图的版本不对，没有导入'};
   const q=pl.params||{},np={...P};
@@ -572,8 +575,17 @@ function drawPlan(ctx,X,Y,d,v){const pl=exportPlan();ctx.save();ctx.globalAlpha=
     const[ox,oy,bx]=best,tx=px+ox*d,ty=py+oy*d;boxes.push(Object.assign(bx,{t}));PLAN_LABELS.push({t,x1:bx.x1/d,x2:bx.x2/d,y1:bx.y1/d,y2:bx.y2/d});
     if(Math.abs(oy)>20){ctx.strokeStyle='rgba(255,255,255,0.7)';ctx.lineWidth=1*d;ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(ox>0?tx:tx+w,ty-5*d);ctx.stroke();}
     ctx.lineWidth=4*d;ctx.strokeStyle='rgba(0,0,0,0.75)';ctx.strokeText(t,tx,ty);ctx.fillStyle='#fff';ctx.fillText(t,tx,ty);}
-  ctx.setLineDash([]);const t='规划图：中心 '+pl.centers.length+' 个 · 主干道 '+pl.arterials.length+' 条 · 分区（D2 加入）';
+  ctx.setLineDash([]);const t='规划图：中心 '+pl.centers.length+' 个 · 主干道 '+pl.arterials.length+' 条 · 分区：勾「显示分区」查看';
   ctx.font=(12*d)+'px sans-serif';ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(v.ox+6*d,v.oy+6*d,ctx.measureText(t).width+12*d,20*d);ctx.fillStyle='#fff';ctx.fillText(t,v.ox+12*d,v.oy+20*d);ctx.restore();}
+// D2 分区色块：半透明画在场景上，左下角图例写各区面积（公顷）
+function drawZones(ctx,X,Y,d,v,z){ctx.save();ctx.globalAlpha=0.38;const c=z.cell;
+  for(let j=0;j<z.n;j++)for(let i=0;i<z.n;i++){const L=z.lab[j*z.n+i];if(!L)continue;ctx.fillStyle=ZONE_COL[L];ctx.fillRect(X(i*c),Y(j*c),c*v.sc+0.5,c*v.sc+0.5);}
+  ctx.globalAlpha=1;ctx.font=(12*d)+'px sans-serif';ctx.textAlign='left';ctx.textBaseline='middle';
+  const rows=z.names.map((n,i)=>[i,n]).filter(r=>r[0]>0),lh=18*d,w=150*d,h=rows.length*lh+10*d,x0=v.ox+8*d,y0=v.oy+CFG.SIZE*v.sc-h-8*d;
+  ctx.fillStyle='rgba(20,22,28,0.8)';ctx.fillRect(x0,y0,w,h);
+  rows.forEach(([i,n],k)=>{const y=y0+5*d+lh*k+lh/2;ctx.fillStyle=ZONE_COL[i];ctx.fillRect(x0+8*d,y-6*d,12*d,12*d);ctx.fillStyle='#fff';ctx.fillText(n+'  '+(z.area[n]/10000).toFixed(2)+' 公顷',x0+28*d,y);});
+  ctx.restore();}
+$('showzone').onchange=()=>refresh();
 $('showplan').onchange=()=>refresh();
 $('planexp').onclick=()=>{const b=new Blob([JSON.stringify(exportPlan(),null,1)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='规划图-种子'+P.seed+'.json';document.body.appendChild(a);a.click();a.remove();flash('规划图已导出');};
 $('planimp').onclick=()=>$('planfile').click();
@@ -582,7 +594,7 @@ $('plansave').onclick=()=>{try{localStorage.setItem('castle-plan',JSON.stringify
 $('planload').onclick=()=>{let t=null;try{t=localStorage.getItem('castle-plan');}catch(e){}if(!t){flash('本机还没有保存过规划图');return;}let r;try{r=importPlan(JSON.parse(t));}catch(e){r={ok:false,msg:'本机保存的规划图读不出来'};}flash(planMsg(r));};
 
 // 供验证环境调用的接口
-window.sim={reach,residential,hubs:()=>({hubs:(S.scene&&S.scene.hubs)||[],miss:(S.scene&&S.scene.hubMiss)||[]}),planLabels:()=>PLAN_LABELS.slice(),exportPlan,importPlan,fingerprint:sceneFingerprint,generate,setMode,heightAt,setParams,castle,riverDist,isWater,resetCastle,
+window.sim={zones:()=>{const z=S.scene&&S.scene.zones;if(!z)return null;const {lab,own,...o}=z;return o;},reach,residential,hubs:()=>({hubs:(S.scene&&S.scene.hubs)||[],miss:(S.scene&&S.scene.hubMiss)||[]}),planLabels:()=>PLAN_LABELS.slice(),exportPlan,importPlan,fingerprint:sceneFingerprint,generate,setMode,heightAt,setParams,castle,riverDist,isWater,resetCastle,
   setOverlay3D:b=>{S.overlay3d=!!b;refresh();}, overlayCount:()=>ovCount,
   scene:()=>{const s=S.scene;if(!s)return null;const n=k=>s.boxes.filter(b=>b.kind===k).length;return {houses:n('house'),walls:n('wall'),towers:n('tower'),keep:n('keep'),roads:s.roads.length,bridges:s.roads.filter(r=>r.deck.some(d=>d!==null)).length,people:s.people.length,fields:s.fields.length,gate:s.gate};},
   audit:()=>S.audit, sceneMs:()=>S.sceneMs, earth:()=>S.earth, baseAt,
