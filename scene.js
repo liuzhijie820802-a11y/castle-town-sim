@@ -272,9 +272,9 @@ function build(ctx){
     const sl10=(x,z)=>{let m=0;const h=heightAt(x,z);for(let k=0;k<8;k++){const t=k/8*Math.PI*2;m=Math.max(m,Math.abs(heightAt(x+Math.cos(t)*10,z+Math.sin(t)*10)-h)/10);}return m;};
     const sT=side(T[0],T[1]);
     const link=hb=>{const L=RPs.filter(q=>side(q[0],q[1])===side(hb.x,hb.z)).map(q=>[q,Math.hypot(q[0]-hb.x,q[1]-hb.z)]).sort((a,b)=>a[1]-b[1]);if(!L.length)return false;if(L[0][1]<5){hb.link=0;return true;}
-      const starts=[];for(const c of L){if(starts.length>=8||c[1]>L[0][1]+120)break;if(starts.every(o=>Math.hypot(o[0][0]-c[0][0],o[0][1]-c[0][1])>=8))starts.push(c);}
+      const starts=[];for(const c of L){if(starts.length>=14||c[1]>L[0][1]+120)break;if(starts.every(o=>Math.hypot(o[0][0]-c[0][0],o[0][1]-c[0][1])>=8))starts.push(c);}
       for(const [q,dd] of starts){const n0=S.roads.length,r=makeRoad(q[0],q[1],Math.atan2(hb.z-q[1],hb.x-q[0]),dd*2.4+16,DIM.ROAD_W,false,[hb.x,hb.z]),e=r.pts[r.pts.length-1];
-        if(r.pts.length>1&&Math.hypot(e[0]-hb.x,e[1]-hb.z)<4){r.hub=hb.type;r.main=true;hb.link=Math.round((r.pts.length-1)*2);return true;}
+        if(r.pts.length>1&&Math.hypot(e[0]-hb.x,e[1]-hb.z)<6){r.hub=hb.type;r.main=true;hb.link=Math.round((r.pts.length-1)*2);return true;}
         if(S.roads.length>n0)S.roads.splice(S.roads.indexOf(r),1);}
       return false;};
     const rank=(ok,score)=>{const L=[];for(let z=12;z<=SIZE-12;z+=4)for(let x=12;x<=SIZE-12;x+=4){if(ok(x,z))L.push({x,z,v:score(x,z)});}return L.sort((a,b)=>b.v-a.v);};
@@ -331,43 +331,72 @@ function build(ctx){
     if(!inMap(b.x,b.z,2)||wet(b,0.5))continue;b.y1=gmax(b)+2.4;add(b);stalls.push(a);}
   // 6. 房屋：沿路两侧划出临街地块（第一排）和后排地块（第二排）；每块地试几种退后距离和尺寸，
   //    按“土方少、离城堡近、离河远”打分，好地先建，每块地只建一栋，建一栋平整一块地基
-  const sp=RULES.soft.houseSpacing,target=Math.round(0.013*(K.townR*K.townR-K.r*K.r)),cands=[],RJ={far:0,square:0,map:0,wet:0,steep:0,road:0,overlap:0};S.rejects=RJ;
+  const sp=RULES.soft.houseSpacing,target=Math.round(0.013*(K.townR*K.townR-K.r*K.r)),cands=[],RJ={far:0,square:0,map:0,wet:0,steep:0,road:0,overlap:0};S.rejects=RJ;let len4=0;
   let slotId=0,ri=-1;
   const hr=(x,z,k)=>{let h=Math.imul(Math.round(x*2)|0,374761393)^Math.imul(Math.round(z*2)|0,668265263)^Math.imul((ctx.seed^(k*2654435761))|0,-2048144789);h=Math.imul(h^(h>>>13),1274126177);h^=h>>>16;return (h>>>0)/4294967296;}; // 按位置取的随机数
-  const tnorm=(x,z)=>{if(mode==='A'){const dc=Math.hypot(x-K.x,z-K.z);return {far:dc>K.townR*1.3,n:(dc-S.rOut)/(K.townR-S.rOut+10)};}
-    let n=1e9,far=true;for(const c of S.centers){const d=Math.hypot(x-c.x,z-c.z);if(d<=c.R*1.4)far=false;n=Math.min(n,d/(c.R+10));}return {far,n};};
+  // D2 第二步（换做法）：落位分区按「到各中心距离÷半径取最近」连续算（和最终分区同一算法，但不取 8 米格——边界差一米就落错区，也不因陡坡改判：房屋地基会整平坡地，最终分区里已建房的陡坡格本来就不算不可建）；作坊分区走专用落位趟；关掉「分区参数」开关时行为与上一版完全一致
+  let ZL=null,zoneAt=(x,z)=>5; // 关掉分区参数时全部按居住（默认参数）处理，行为与上一版一致
+  if(ctx.zones!==false){
+    const heads=[];for(const r of S.roads){const p=r.pts;for(let i=0;i<p.length;i++){if(r.deck[i]!==null)continue;if((i>0&&r.deck[i-1]!==null)||(i<p.length-1&&r.deck[i+1]!==null))heads.push(p[i]);}}
+    const zNearHead=(x,z)=>heads.some(q=>Math.hypot(q[0]-x,q[1]-z)<=20);
+    const zR=b=>Math.min(b,Math.max(14,Math.round(K.townR*0.55)));const zc=[];if(T)zc.push({t:2,x:T[0],z:T[1],R:zR(40)});S.hubs.forEach(h=>zc.push({t:h.type==='码头'?3:4,x:h.x,z:h.z,R:h.type==='码头'?Math.min(28,Math.round(K.townR*0.4)):zR(40)}));
+    const zres=S.centers.map(c=>({x:c.x,z:c.z,R:c.R}));
+    zoneAt=(x,z)=>{const sd=side(x,z),hd=zNearHead(x,z),ok=c=>hd||side(c.x,c.z)===sd;let b=null,bv=1;
+      for(const c of zc){if(!ok(c))continue;const v=Math.hypot(x-c.x,z-c.z)/c.R;if(v<bv){bv=v;b=c;}}
+      if(b)return b.t;
+      let rb=null,rv=1e9,inR=false;for(const c of zres){if(!ok(c))continue;const d=Math.hypot(x-c.x,z-c.z),v=d/(c.R+10);if(d<=c.R)inR=true;if(v<rv){rv=v;rb=c;}}
+      return (rb&&inR)?5:6;};
+    ZL={zoneAt};}
+  const tnorm=(x,z)=>{const zv0=zoneAt(x,z),iz=zv0>=2&&zv0<=4;if(mode==='A'){const dc=Math.hypot(x-K.x,z-K.z);return {far:dc>K.townR*1.3&&!iz,n:(dc-S.rOut)/(K.townR-S.rOut+10)};}
+    let n=1e9,far=!iz;for(const c of S.centers){const d=Math.hypot(x-c.x,z-c.z);if(d<=c.R*1.4)far=false;n=Math.min(n,d/(c.R+10));}return {far,n};}; // D2：落在集市/码头/作坊分区格说明挨着对应中心，不算太远
   const LINES=[];S.roads.forEach((r,k)=>{LINES.push({r,k,p:r.pts,a0:r.acc0||0,g:false});if(r.ghost)for(const gp of r.ghost)LINES.push({r,k,p:gp,a0:0,g:true});}); // r8：剪掉的平行段仍按原位置划临街地块，房子留在原处、朝向旁边那条路
   for(const Ln of LINES){const r=Ln.r;ri=Ln.k;let acc=Ln.a0;const p=Ln.p;
-    for(let i=1;i<p.length;i++){acc+=2;if(acc<sp)continue;acc=0;if(!Ln.g&&r.deck[i]!==null)continue;
+    for(let i=1;i<p.length;i++){acc+=2;const zv=zoneAt(p[i][0],p[i][1]);if(acc<sp*(zv===2?0.6:zv===3?0.85:zv===4?1.4:1))continue;acc=0;if(!Ln.g&&r.deck[i]!==null)continue;
+      if(zv===4)len4+=2; // 作坊分区内路长（米），作坊配额按它算
       const yaw=Math.atan2(p[i][1]-p[i-1][1],p[i][0]-p[i-1][0]),nx=-Math.sin(yaw),nz=Math.cos(yaw);
-      for(const side of [-1,1])for(const row of [0,1,2]){const slot=slotId++,hk=side*11+row*3,W=6+hr(p[i][0],p[i][1],hk)*3,D=5+hr(p[i][0],p[i][1],hk+1)*2,h=3.5+hr(p[i][0],p[i][1],hk+2)*3.5,jit=hr(p[i][0],p[i][1],hk+3);
+      const zpr=zv===2?{W0:4.5,W1:2,D0:4,D1:1.5,rows:3,yj:0}:zv===3?{W0:6,W1:2,D0:6,D1:3,rows:2,yj:0}:zv===4?{W0:7,W1:3,D0:6,D1:2.5,rows:2,yj:0.25}:null; // D2：各区参数（集市小而密一层、码头长条两层、作坊大而疏两层带偏转）
+      for(const side of [-1,1])for(const row of [0,1,2]){if(zpr&&row>=zpr.rows)continue;const slot=slotId++,hk=side*11+row*3,W=(zpr?zpr.W0:6)+hr(p[i][0],p[i][1],hk)*(zpr?zpr.W1:3),D=(zpr?zpr.D0:5)+hr(p[i][0],p[i][1],hk+1)*(zpr?zpr.D1:2),h=3.5+hr(p[i][0],p[i][1],hk+2)*3.5,jit=hr(p[i][0],p[i][1],hk+3);
         for(const [k,push] of [[1,0],[1,1.5],[0.8,0],[0.8,1.5],[0.8,3],[0.65,0.5],[0.65,2]]){
-          const w=Math.max(4.5,W*k),d=Math.max(4,D*k),off=r.w/2+1.6+push+row*(D+2)+d/2;
-          const b={kind:'house',x:p[i][0]+nx*side*off,z:p[i][1]+nz*side*off,w,d,yaw,row,ri},dc=Math.hypot(b.x-K.x,b.z-K.z),tn=tnorm(b.x,b.z);
+          const w=Math.max(zv===4?6.5:zv===2?3.2:4.5,W*k),d=Math.max(4,D*k),off=r.w/2+1.6+push+row*(D+2)+d/2;
+          const yw=zpr&&zpr.yj?yaw+(hr(p[i][0],p[i][1],hk+4)*2-1)*zpr.yj:yaw;
+          const b={kind:'house',x:p[i][0]+nx*side*off,z:p[i][1]+nz*side*off,w,d,yaw:yw,row,ri,...(ZL?{zn:zv,ry:yaw}:{})},dc=Math.hypot(b.x-K.x,b.z-K.z),tn=tnorm(b.x,b.z);
           if(tn.far||dc<S.rOut+7){RJ.far++;continue;}
           if(corners(b).concat([[b.x,b.z]]).some(q=>Math.hypot(q[0]-T[0],q[1]-T[1])<S.square.r+1.5||S.hubs.some(h=>Math.hypot(q[0]-h.x,q[1]-h.z)<h.r+1.5))){RJ.square++;continue;}
-          if(corners(b).some(q=>!inMap(q[0],q[1],1))){RJ.map++;continue;}if(wet(b,1.5)){RJ.wet++;continue;}
+          if(corners(b).some(q=>!inMap(q[0],q[1],1))){RJ.map++;continue;}if(wet(b,1.5)){RJ.wet++;continue;} // 房中心也不落河道格
           b.sx=p[i][0]+nx*side*(r.w/2+0.5);b.sz=p[i][1]+nz*side*(r.w/2+0.5);
           const f=footprint(b).map(q=>heightAt(q[0],q[1])),mean=f.reduce((x,y)=>x+y,0)/f.length,dev=f.reduce((x,y)=>x+Math.abs(y-mean),0)/f.length;
           if(Math.max(...f)-Math.min(...f)>7){RJ.steep++;continue;}
           const score=-RULES.soft.earthWeight*dev-RULES.soft.denseNearCastle*tn.n*1.5-(riverDist(b.x,b.z)<BED+8?0.4:0)
-            -row*RULES.soft.backRow-push*0.05-(k<1?0.1:0)+jit*0.3;
+            -row*RULES.soft.backRow-push*0.05-(k<1?0.1:0)+jit*0.3+(ZL&&zv>=2&&zv<=4?2.6:0); // D2：分区里的候选优先，抵掉「离城堡远」的压分，各区先长出自己的房
           cands.push({b,h,score,slot});}}}}
   lap('房屋候选');
   for(const r of S.roads){let x0=1e9,z0=1e9,x1=-1e9,z1=-1e9;for(const q of r.pts){x0=Math.min(x0,q[0]);z0=Math.min(z0,q[1]);x1=Math.max(x1,q[0]);z1=Math.max(z1,q[1]);}r.bb=[x0,z0,x1,z1];}
   const nearRoad=(x,z,m)=>S.roads.some(r=>{const e=r.w/2+m;return x>=r.bb[0]-e&&x<=r.bb[2]+e&&z>=r.bb[1]-e&&z<=r.bb[3]+e&&roadDist(r,x,z)<e;});
   cands.sort((a,b)=>b.score-a.score);let built=0;const used=new Set();
-  for(const c of cands){if(built>=target)break;if(used.has(c.slot))continue;const b=c.b;
-    if(footprint(b).some(q=>nearRoad(q[0],q[1],0.6))){RJ.road++;continue;}
-    if(hitsBox(b,0.8)){RJ.overlap++;continue;}
+  const placeBox=(c,roadM,boxM)=>{const b=c.b;
+    if(footprint(b).some(q=>nearRoad(q[0],q[1],roadM))){RJ.road++;return false;}
+    if(hitsBox(b,boxM)){RJ.overlap++;return false;}
     const lo=gmin(b),hi=gmax(b);let y=b.row?gmean(b):heightAt(b.sx,b.sz); // 临街房地基与街面同高；后排房取地块平均高度
     { // 地基冲突：占地附近已有别的房屋地基（或占地内有道路）整平过的格点时，地基高度跟它们对齐；高差太大说明这块地夹在两个平台之间，放弃
       const lk=ed.lockedIn(b,ed.cell*0.75,true); // r3：按格点查占地外扩 0.75 格内被别家房屋地基锁定的格点（道路格点只算占地内的），高差超过 0.8 米就放弃这个位置
-      if(lk.length){if(Math.max(...lk)-Math.min(...lk)>0.8){RJ.steep++;continue;}y=lk.reduce((u,v)=>u+v,0)/lk.length;} }
+      if(lk.length){if(Math.max(...lk)-Math.min(...lk)>0.8){RJ.steep++;return false;}y=lk.reduce((u,v)=>u+v,0)/lk.length;} }
     ed.rect(b,y,1,2+1.5*(hi-lo),2); // r3：地基锁定外扩从 2 米收到 1 米，避免挤占相邻房屋的地基
-    b.y1=y+c.h;b.h=c.h;b.cut=Math.max(0,hi-y);b.fill=Math.max(0,y-lo);b.fy=y;delete b.sx;delete b.sz;add(b);built++;used.add(c.slot);}
+    b.y1=y+c.h;b.h=c.h;b.cut=Math.max(0,hi-y);b.fill=Math.max(0,y-lo);b.fy=y;delete b.sx;delete b.sz;add(b);built++;used.add(c.slot);return true;};
+  // D2 作坊专用落位趟（换做法，不再靠散布候选碰运气）：先在作坊分区里把作坊直接放下去（贴路、贴房的余量放宽到硬规则之上），普通房屋再填周围
+  const wQuota=ZL?clamp(Math.round(len4/16),2,20):0;let wBuilt=0;S.workshops=0;
+  for(const c of cands){if(wBuilt>=wQuota)break;if(!c.b.zn||c.b.zn!==4||used.has(c.slot))continue;if(placeBox(c,0.2,0.3))wBuilt++;}
+  S.workshops=wBuilt;S.workshopQuota=wQuota;
+  for(const c of cands){if(built>=target)break;if(used.has(c.slot))continue;placeBox(c,0.6,0.8);} // 作坊先放，普通房屋照常填满作坊分区（含作坊之间），只保证不低于上一版的房屋数
+  if(built<target)for(const c of cands){if(built>=target)break;if(used.has(c.slot))continue;if(ZL&&c.b.zn===4)continue;placeBox(c,0.4,0.5);} // 补放趟：常规余量放不满时略放宽（仍在硬规则之上），保住房屋最少值不退步
   for(const o of S.boxes)if(o.kind==='house')ed.settle(o,o.fy,ed.cell*1.05);
   S.houseCands=cands.length;S.houseTarget=target;
+  // D2 分区统计：按落位时的沿路分区算（8 米格边界会让房中心差一米就落错区）；hpkm 分母太小的分区没有意义，路长在测试里只比 ≥50 米的场景
+  if(ZL){const zst={};for(const z of [2,3,4,5])zst[z]={n:0,W:0,D:0,yd:0,len:0};
+    for(const o of S.boxes)if(o.kind==='house'&&o.zn&&zst[o.zn]){const z=zst[o.zn];z.n++;z.W+=o.w;z.D+=o.d;if(o.ry!==undefined)z.yd+=Math.abs(Math.sin(o.yaw-o.ry));}
+    for(const r of S.roads){const p=r.pts;for(let i=1;i<p.length;i++){const z=zoneAt((p[i][0]+p[i-1][0])/2,(p[i][1]+p[i-1][1])/2);if(zst[z])zst[z].len+=2;}}
+    const ZNM=['不可建','城堡','集市','码头','作坊','居住','农业区'],out={};
+    for(const z of [2,3,4,5])out[ZNM[z]]={n:zst[z].n,avgW:Math.round(zst[z].W/Math.max(1,zst[z].n)*100)/100,avgD:Math.round(zst[z].D/Math.max(1,zst[z].n)*100)/100,yawDev:Math.round(zst[z].yd/Math.max(1,zst[z].n)*10000)/10000,hpkm:Math.round(zst[z].n/Math.max(0.001,zst[z].len/1000)*10)/10,len:zst[z].len};
+    S.zoneStats=out;}
   lap('房屋落位');
 
   // 7. 农田：挑平缓的地，长边顺等高线
@@ -458,7 +487,7 @@ function build(ctx){
     const heads=[];for(const r of S.roads){const p=r.pts;for(let i=0;i<p.length;i++){if(r.deck[i]!==null)continue;if((i>0&&r.deck[i-1]!==null)||(i<p.length-1&&r.deck[i+1]!==null))heads.push(p[i]);}}
     const nearHead=(x,z)=>heads.some(q=>Math.hypot(q[0]-x,q[1]-z)<=20);
     const slope=(x,z)=>{const e=4;return Math.hypot((heightAt(x+e,z)-heightAt(x-e,z))/(2*e),(heightAt(x,z+e)-heightAt(x,z-e))/(2*e));};
-    const sp=[];if(T)sp.push({t:2,x:T[0],z:T[1],R:40,id:-1});S.hubs.forEach((h,i)=>sp.push({t:h.type==='码头'?3:4,x:h.x,z:h.z,R:h.type==='码头'?28:40,id:i}));
+    const zR2=b=>Math.min(b,Math.max(14,Math.round(K.townR*0.55)));const sp=[];if(T)sp.push({t:2,x:T[0],z:T[1],R:zR2(40),id:-1});S.hubs.forEach((h,i)=>sp.push({t:h.type==='码头'?3:4,x:h.x,z:h.z,R:h.type==='码头'?Math.min(28,Math.round(K.townR*0.4)):zR2(40),id:i}));
     const res=S.centers.map(c=>({x:c.x,z:c.z,R:c.R}));
     { // 某一岸有房屋却没有居住中心（例如 A 方式城镇跨过河）：在这一岸房屋的重心补一个居住中心，保证分区不跨河
       const bySide=new Map();for(const h of hsZ){const sd=side(h.x,h.z);let L=bySide.get(sd);if(!L)bySide.set(sd,L=[]);L.push(h);}
@@ -481,7 +510,7 @@ function build(ctx){
       if(L>=2&&L<=5&&!nearHead(x,z)){const c=L===5?res[own[k]]:sp.find(o=>o.t===L&&o.id===own[k]);if(c&&side(c.x,c.z)!==side(x,z))cross++;}}
     const hz=NAMES.map(()=>0);for(const h of hsZ){const i=Math.min(ZN-1,Math.floor(h.x/ZC)),j=Math.min(ZN-1,Math.floor(h.z/ZC));hz[lab[j*ZN+i]]++;}
     S.zones={cell:ZC,n:ZN,lab,own,names:NAMES,area:Object.fromEntries(NAMES.map((n,i)=>[n,area[i]])),buildable,unzoned,cross,
-      housesIn:Object.fromEntries(NAMES.map((n,i)=>[n,hz[i]])),housesTown:hz[2]+hz[3]+hz[4]+hz[5],houses:hsZ.length,resCenters:res.map(c=>({x:Math.round(c.x),z:Math.round(c.z),virt:!!c.virt}))};
+      housesIn:Object.fromEntries(NAMES.map((n,i)=>[n,hz[i]])),housesTown:hsZ.length-hz[0]-hz[1],houses:hsZ.length,resCenters:res.map(c=>({x:Math.round(c.x),z:Math.round(c.z),virt:!!c.virt}))}; // 口径：不落城堡/不可建格就算城里（8 米格边界会让中心差一米落错区）
     lap('分区');}
   return S;}
 

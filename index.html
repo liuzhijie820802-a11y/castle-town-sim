@@ -58,6 +58,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
     <label class="row"><input id="showplan" type="checkbox"> 显示规划图（中心、主干道）</label>
     <label class="row" title="六类分区色块：城堡、集市、码头、作坊、居住、农业区（8 米一格）"><input id="showzone" type="checkbox"> 显示分区（六类色块）</label>
     <label class="row" title="自动放码头、作坊，并各修一条路过去；关掉就是单中心（v0.11 的结果）"><input id="mc" type="checkbox" checked> 多中心（码头、作坊）</label>
+    <label class="row" title="集市小而密、作坊大而疏且朝向带偏转、码头长条地块；关掉就回到 v0.12 的房屋"><input id="mzone" type="checkbox" checked> 房屋按分区取参数</label>
     <label>城镇规模<select id="town"><option value="s">小</option><option value="m" selected>中</option><option value="l">大</option></select></label>
     <label>城镇生长<select id="tg"><option value="A" selected>A 跟随城堡</option><option value="B">B 单中心</option><option value="C">C 多中心</option></select></label>
     <label>地块大小<select id="size"><option value="256" selected>256 米</option><option value="512">512 米</option><option value="1024">1024 米</option></select></label>
@@ -84,7 +85,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
 // ===== 配置 =====
 const CFG = { N: 129, SIZE: 256, HMAX: 32, RIVER_BED: 4, RIVER_BANK: 18 }; // 网格顶点数 / 地块边长(米) / 最大高度(米) / 河床半宽 / 河岸过渡宽度
 const TOWN = { s: { name: '小', r: 25 }, m: { name: '中', r: 40 }, l: { name: '大', r: 60 } };
-const P = { seed: 20261005, relief: 1, river: true, town: 'm', walls: 2, size: 256, tg: 'A', mc: true };  // 生成参数
+const P = { seed: 20261005, relief: 1, river: true, town: 'm', walls: 2, size: 256, tg: 'A', mc: true, zones: true };  // 生成参数
 const O = { castle: null };                                                 // 人工覆盖：重新生成时保留，不被自动结果冲掉
 const S = { mode: '2d', heights: null, minH: 0, maxH: 0, errors: [], view2d: null, webgl: false, river: null, autoCastle: null };
 window.addEventListener('error', e => S.errors.push(String(e.message)));
@@ -344,7 +345,7 @@ function build3D(){
     data.set([x,h,z,n[0],n[1],n[2],col[0]/255,col[1]/255,col[2]/255],o);}
   gl.bindBuffer(gl.ARRAY_BUFFER,vbo); gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
 }
-function sceneCtx(){return {heightAt,riverDist,isWater,SIZE:CFG.SIZE,BED:CFG.RIVER_BED,HMAX:CFG.HMAX,castle:castle(),seed:P.seed,baseAt,townMode:P.tg,multi:P.mc,riverX:(P.river&&S.river)?riverX:null,
+function sceneCtx(){return {heightAt,riverDist,isWater,SIZE:CFG.SIZE,BED:CFG.RIVER_BED,HMAX:CFG.HMAX,castle:castle(),seed:P.seed,baseAt,townMode:P.tg,multi:P.mc,zones:P.zones!==false,riverX:(P.river&&S.river)?riverX:null,
   grid:{N:CFG.N,cell:CFG.SIZE/(CFG.N-1),h:S.heights,base:S.baseHeights,water:S.waterGrid}};}
 function buildScene(){ // 先恢复原始地形，再生成场景（场景会修正地形），最后按硬规则自检
   if(S.baseHeights) S.heights.set(S.baseHeights);
@@ -455,7 +456,7 @@ function resetCastle(){O.castle=null; buildScene(); syncPanel(); refresh(); writ
 function syncPanel(){
   $('seed').value=P.seed; $('relief').value=P.relief; $('vRelief').textContent=Number(P.relief).toFixed(1);
   $('river').checked=P.river; $('town').value=P.town; $('walls').value=String(P.walls); $('size').value=String(P.size);
-  $('tg').value=P.tg; $('mc').checked=P.mc;
+  $('tg').value=P.tg; $('mc').checked=P.mc; $('mzone').checked=P.zones!==false;
   const m=$('cmode'); m.textContent=O.castle?(O.snapped?'手动（已自动避开河道）':'手动（已覆盖自动结果）'):'自动'; m.className=O.castle?'manual':''; $('cauto').disabled=!O.castle;}
 let flashT=0; function flash(t){S.flash=t;clearTimeout(flashT);refresh();flashT=setTimeout(()=>{S.flash='';refresh();},1800);}
 function refresh(){ if(!S.heights) return;
@@ -476,7 +477,7 @@ function refresh(){ if(!S.heights) return;
   if(S.mode==='3d') $('probe').innerHTML='左键拖动：旋转<br>右键 / Shift+拖动：平移<br>滚轮：缩放'; else if(!/^X /.test($('probe').innerHTML)) $('probe').innerHTML='移动鼠标到地形上查看坐标';
   $('status').textContent=S.flash||(S.errors.length?('⚠ '+S.errors[0]):(S.audit&&S.audit.total?('⚠ 硬规则有 '+S.audit.total+' 处违反（已标红）'):'就绪'));
 }
-function writeHash(){const q=new URLSearchParams();q.set('seed',P.seed);q.set('relief',P.relief);q.set('river',P.river?1:0);q.set('town',P.town);q.set('walls',P.walls);q.set('size',P.size);q.set('tg',P.tg);q.set('mc',P.mc?1:0);
+function writeHash(){const q=new URLSearchParams();q.set('seed',P.seed);q.set('relief',P.relief);q.set('river',P.river?1:0);q.set('town',P.town);q.set('walls',P.walls);q.set('size',P.size);q.set('tg',P.tg);q.set('mc',P.mc?1:0);q.set('zones',P.zones!==false?1:0);
   if(O.castle){q.set('cx',O.castle.x.toFixed(1));q.set('cz',O.castle.z.toFixed(1));} q.set('mode',S.mode);
   const u=location.href.split('#')[0]+'#'+q.toString(); try{history.replaceState(null,'',u);}catch(e){} }
 function readHash(){const q=new URLSearchParams(location.hash.slice(1));
@@ -488,6 +489,7 @@ function readHash(){const q=new URLSearchParams(location.hash.slice(1));
   const sz=Number(q.get('size')); if([256,512,1024].includes(sz)) P.size=sz;
   if(['A','B','C'].includes(q.get('tg'))) P.tg=q.get('tg');
   if(q.has('mc')) P.mc=q.get('mc')!=='0';
+  if(q.has('zones')) P.zones=q.get('zones')!=='0';
   if(q.has('cx')&&q.has('cz')) O.castle={x:Number(q.get('cx')),z:Number(q.get('cz'))};
   S.mode=q.get('mode')==='3d'?'3d':'2d';}
 $('gen').onclick=()=>generate($('seed').value);
@@ -502,6 +504,7 @@ $('walls').onchange=e=>setParams({walls:Number(e.target.value)});
 $('size').onchange=e=>setParams({size:Number(e.target.value)});
 $('tg').onchange=e=>setParams({tg:e.target.value});
 $('mc').onchange=e=>setParams({mc:e.target.checked});
+$('mzone').onchange=e=>setParams({zones:e.target.checked});
 $('cauto').onclick=resetCastle;
 $('earth').onclick=()=>{S.showEarth=!S.showEarth;$('earth').textContent=S.showEarth?'隐藏挖填方':'显示挖填方';build3D();refresh();};
 $('copy').onclick=()=>{if(navigator.clipboard)navigator.clipboard.writeText(location.href).then(()=>flash('链接已复制'),()=>flash('复制失败，请直接复制地址栏'));else flash('请直接复制地址栏');};
@@ -549,6 +552,7 @@ function importPlan(pl){
   if([256,512,1024].includes(Number(q.size))) np.size=Number(q.size);
   if(['A','B','C'].includes(q.tg)) np.tg=q.tg;
   np.mc=typeof q.mc==='boolean'?q.mc:false; // v0.11 存的规划图没有这一项：按单中心导入，保证重现原场景
+  np.zones=q.zones===true; // v0.12 存的规划图没有这一项：按关闭分区参数导入，保证重现原场景
   const oc=pl.overrides&&pl.overrides.castle;
   Object.assign(P,np); O.castle=(oc&&Number.isFinite(oc.x)&&Number.isFinite(oc.z))?{x:oc.x,z:oc.z}:null; O.snapped=false;
   generate(); const fp=sceneFingerprint();
@@ -594,7 +598,7 @@ $('plansave').onclick=()=>{try{localStorage.setItem('castle-plan',JSON.stringify
 $('planload').onclick=()=>{let t=null;try{t=localStorage.getItem('castle-plan');}catch(e){}if(!t){flash('本机还没有保存过规划图');return;}let r;try{r=importPlan(JSON.parse(t));}catch(e){r={ok:false,msg:'本机保存的规划图读不出来'};}flash(planMsg(r));};
 
 // 供验证环境调用的接口
-window.sim={zones:()=>{const z=S.scene&&S.scene.zones;if(!z)return null;const {lab,own,...o}=z;return o;},reach,residential,hubs:()=>({hubs:(S.scene&&S.scene.hubs)||[],miss:(S.scene&&S.scene.hubMiss)||[]}),planLabels:()=>PLAN_LABELS.slice(),exportPlan,importPlan,fingerprint:sceneFingerprint,generate,setMode,heightAt,setParams,castle,riverDist,isWater,resetCastle,
+window.sim={zones:()=>{const z=S.scene&&S.scene.zones;if(!z)return null;const {lab,own,...o}=z;return o;},reach,residential,hubs:()=>({hubs:(S.scene&&S.scene.hubs)||[],miss:(S.scene&&S.scene.hubMiss)||[]}),planLabels:()=>PLAN_LABELS.slice(),exportPlan,importPlan,zoneStats:()=>(S.scene&&S.scene.zoneStats)||null,fingerprint:sceneFingerprint,generate,setMode,heightAt,setParams,castle,riverDist,isWater,resetCastle,
   setOverlay3D:b=>{S.overlay3d=!!b;refresh();}, overlayCount:()=>ovCount,
   scene:()=>{const s=S.scene;if(!s)return null;const n=k=>s.boxes.filter(b=>b.kind===k).length;return {houses:n('house'),walls:n('wall'),towers:n('tower'),keep:n('keep'),roads:s.roads.length,bridges:s.roads.filter(r=>r.deck.some(d=>d!==null)).length,people:s.people.length,fields:s.fields.length,gate:s.gate};},
   audit:()=>S.audit, sceneMs:()=>S.sceneMs, earth:()=>S.earth, baseAt,

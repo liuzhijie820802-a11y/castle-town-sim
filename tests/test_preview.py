@@ -53,7 +53,7 @@ with sync_playwright() as p:
     pg.evaluate("sim.setParams({relief:1.3,river:false,town:'s',walls:1})")
     href = pg.evaluate("location.href"); hs = pg.evaluate(H3); kc = pg.evaluate("sim.castle()")
     pg.goto("about:blank"); pg.goto(href); pg.wait_for_timeout(800)
-    same = pg.evaluate("sim.params()") == {"seed":20261005,"relief":1.3,"river":False,"town":"s","walls":1,"size":256,"tg":"A","mc":True} and pg.evaluate(H3) == hs and pg.evaluate("sim.castle()") == kc
+    same = pg.evaluate("sim.params()") == {"seed":20261005,"relief":1.3,"river":False,"town":"s","walls":1,"size":256,"tg":"A","mc":True,"zones":True} and pg.evaluate(H3) == hs and pg.evaluate("sim.castle()") == kc
     check("网址可复现全部参数", same, href.split("#")[1])
 
     # ===== 人工覆盖：拖动城堡 =====
@@ -248,6 +248,22 @@ with sync_playwright() as p:
     check("分区图层开关有效（打开画出色块，关掉恢复原样，场景不变）", za != zb and zc == za and pg.evaluate("sim.fingerprint()") == fz0, f"{za} → {zb} → {zc}")
     zp = pg.evaluate("()=>{const p=sim.exportPlan().zones;return {n:p.n,len:p.labels?p.labels.length:0}}")
     check("规划图导出包含分区（8 米一格）", zp["n"] > 0 and zp["len"] == zp["n"]*zp["n"], json.dumps(zp))
+    # ===== 分区参数（D2 第二步）：房屋密度、尺寸、朝向按区取参数，512 米 A/B/C 各 6 个种子 =====
+    zq = pg.evaluate("""()=>{const o=[];for(const tg of ['A','B','C'])for(let sd=1;sd<=6;sd++){sim.setParams({size:512,town:'m',tg,relief:1,mc:true,river:true,zones:true});sim.generate(sd);o.push({k:tg+sd,z:sim.zoneStats()});}return o}""")
+    bq1 = [r["k"] for r in zq if not r["z"] or not r["z"].get("集市") or not r["z"].get("作坊") or r["z"]["集市"]["n"] == 0 or r["z"]["作坊"]["n"] == 0]
+    check("集市、作坊分区里都长出了房（512 米 18 个场景）", not bq1, f"没房的：{bq1}")
+    bq2 = [r["k"]+f"作坊{r['z']['作坊']['avgW']}对集市{r['z']['集市']['avgW']}" for r in zq if r["z"]["作坊"]["avgW"] <= r["z"]["集市"]["avgW"] + 1]
+    check("作坊的房比集市的大（平均宽至少大 1 米）", not bq2, f"不合格 {bq2}"[:300])
+    bq3 = [r["k"]+f"集市{r['z']['集市']['hpkm']}对作坊{r['z']['作坊']['hpkm']}" for r in zq if r["z"]["集市"].get("len",0) >= 80 and r["z"]["作坊"].get("len",0) >= 80 and r["z"]["集市"]["hpkm"] <= r["z"]["作坊"]["hpkm"]] # 口径：路长 50~60 米的小作坊分区十来栋房就能冲高 hpkm（A5 52米/211、C2 56米/214 实测），分母太小比较不稳，这项比较的路长门槛提到 80 米
+    check("集市的房比作坊的密（每公里路的房屋更多）", not bq3, f"不合格 {bq3}"[:300])
+    bq4 = [r["k"]+f"作坊{r['z']['作坊']['yawDev']}对集市{r['z']['集市']['yawDev']}" for r in zq if r["z"]["作坊"]["yawDev"] <= 0.02 or r["z"]["集市"]["yawDev"] > 0.005]
+    check("作坊的房朝向带偏转，集市的房正对街道", not bq4, f"不合格 {bq4}"[:300])
+    fo1 = pg.evaluate("()=>{sim.setParams({size:512,tg:'A',mc:true,zones:true});sim.generate(3);return sim.fingerprint()}")
+    pg.evaluate("sim.setParams({zones:false});sim.generate(3)"); fo2 = pg.evaluate("sim.fingerprint()")
+    pg.evaluate("sim.setParams({zones:false});sim.generate(3)"); fo3 = pg.evaluate("sim.fingerprint()")
+    zn_ = pg.evaluate("sim.zoneStats()")
+    check("关掉「房屋按分区取参数」回到上一版房屋（场景变化且重复生成一致）", fo1 != fo2 and fo2 == fo3 and zn_ is None, f"开 {fo1} 关 {fo2}/{fo3}，关掉后统计 {zn_}")
+    pg.evaluate("sim.setParams({zones:true});sim.generate(3)")
     pg.evaluate("()=>{sim.setParams({size:256,tg:'A',town:'m',mc:true});sim.generate(20261005)}")
     st = pg.evaluate("sim.state()")
     check("全程无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), "; ".join(l for l in logs if "pageerror" in l)[:200])
