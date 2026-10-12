@@ -399,20 +399,37 @@ function build(ctx){
     S.zoneStats=out;}
   lap('房屋落位');
 
-  // 7. 农田：挑平缓的地，长边顺等高线
+  // 7. 农田：挑平缓的地，长边顺等高线；D2 第四步：数量按房屋数算（约 8 栋房一块田），且每块田都要挨着路网
   const fc=[];
-  for(let z=10;z<=SIZE-10;z+=10)for(let x=10;x<=SIZE-10;x+=10){const dc=Math.hypot(x-K.x,z-K.z);let fd=dc-K.townR;
-    if(mode==='A'){if(dc<Math.max(K.townR*0.85,S.rOut+12)||dc>K.townR+70)continue;}
-    else{if(dc<S.rOut+12)continue;let inT=false;fd=1e9;for(const c of S.centers){const d=Math.hypot(x-c.x,z-c.z);if(d<c.R*0.9)inT=true;fd=Math.min(fd,d-c.R);}if(inT||fd>70)continue;}
-    const [gx,gz]=grad(x,z),f={kind:'field',x,z,w:12,d:18,yaw:Math.atan2(gz,gx)};
-    if(corners(f).some(c=>!inMap(c[0],c[1],1))||wet(f,2))continue;const v=gmax(f)-gmin(f);if(v>4)continue;
-    fc.push({f,score:-v-0.01*Math.abs(fd-20)+rnd()*0.2});}
+  const bandFd=(x,z)=>{const dc=Math.hypot(x-K.x,z-K.z);let fd=dc-K.townR;
+    if(mode==='A'){if(dc<Math.max(K.townR*0.85,S.rOut+12)||dc>K.townR+70)return null;}
+    else{if(dc<S.rOut+12)return null;let inT=false;fd=1e9;for(const c of S.centers){const d=Math.hypot(x-c.x,z-c.z);if(d<c.R*0.9)inT=true;fd=Math.min(fd,d-c.R);}if(inT||fd>70)return null;}
+    return fd;};
+  const roadGap=f=>Math.min(...footprint(f).map(q=>Math.min(...S.roads.map(r=>roadDist(r,q[0],q[1])-r.w/2))));
+  const tryField=(x,z,yaw,vmax)=>{const fd=bandFd(x,z);if(fd===null)return;
+    const f={kind:'field',x,z,w:10,d:15,yaw};
+    if(corners(f).some(c=>!inMap(c[0],c[1],1))||wet(f,2))return;const v=gmax(f)-gmin(f);if(v>vmax)return;
+    const mr=roadGap(f);if(mr<1||mr>40)return; // 田接路网：田边离最近的路要在 1~40 米之间，压路和离路太远都不要
+    fc.push({f,mr,score:-v-0.01*Math.abs(fd-20)-0.04*mr+rnd()*0.2});};
+  for(let z=10;z<=SIZE-10;z+=10)for(let x=10;x<=SIZE-10;x+=10){const [gx,gz]=grad(x,z);tryField(x,z,Math.atan2(gz,gx),4);}
+  for(const r of S.roads){const p=r.pts,hw=r.w/2;let need=10;
+    for(let i=1;i<p.length;i++){let sx=p[i-1][0],sz=p[i-1][1];const dx=p[i][0]-sx,dz=p[i][1]-sz,L=Math.hypot(dx,dz);if(L<1e-6)continue;
+      const ux=dx/L,uz=dz/L,nx=-uz,nz=ux;
+      while(need<=L){const t=need/L,x=sx+dx*t,z=sz+dz*t;
+        for(const side of [-1,1])for(const off of [hw+6,hw+17,hw+28,hw+39])tryField(x+nx*side*off,z+nz*side*off,Math.atan2(uz,ux),5.5);
+        need+=16;}
+      need-=L;}}
   fc.sort((a,b)=>b.score-a.score);
   const fieldCap=Math.round(Math.PI*((K.townR+70)**2-(0.85*K.townR)**2)/1280);
-  for(const c of fc){if(S.fields.length>=fieldCap)break;const f=c.f;
+  const housesN=S.boxes.filter(o=>o.kind==='house').length;
+  const fieldTarget=Math.min(fieldCap,Math.max(4,Math.round(housesN/8))); // D2 第四步：农田面积按房屋数算（约 8 栋房一块田），不再按环带面积封顶
+  let roadFar=0;
+  for(const c of fc){if(S.fields.length>=fieldTarget)break;const f=c.f;
     if(footprint(f).some(q=>S.roads.some(r=>roadDist(r,q[0],q[1])<r.w/2+1)))continue;
     if(S.fields.some(o=>overlapRect(o,f,1))||hitsBox(f,1))continue;
+    roadFar=Math.max(roadFar,c.mr);
     f.col=S.fields.length%2?'field1':'field2';S.fields.push(f);}
+  S.fieldStats={n:S.fields.length,target:fieldTarget,roadFar:Math.round(roadFar*10)/10,houses:housesN};
 
   lap('农田');
   // 8. 地形改完后，所有建筑重新落地；城门洞按平整后的地面重算

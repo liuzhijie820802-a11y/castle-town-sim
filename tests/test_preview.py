@@ -258,6 +258,11 @@ with sync_playwright() as p:
     check("集市的房比作坊的密（每公里路的房屋更多）", not bq3, f"不合格 {bq3}"[:300])
     bq4 = [r["k"]+f"作坊{r['z']['作坊']['yawDev']}对集市{r['z']['集市']['yawDev']}" for r in zq if r["z"]["作坊"]["yawDev"] <= 0.02 or r["z"]["集市"]["yawDev"] > 0.005]
     check("作坊的房朝向带偏转，集市的房正对街道", not bq4, f"不合格 {bq4}"[:300])
+    fq = pg.evaluate("""()=>{const o=[];for(const tg of ['A','B','C'])for(let sd=1;sd<=6;sd++){sim.setParams({size:512,town:'m',tg,relief:1,mc:true,river:true,zones:true});sim.generate(sd);o.push({k:tg+sd,f:(S.scene&&S.scene.fieldStats)||null});}return o}""")
+    fq1 = [r["k"]+f"{r['f']['n']}块对{r['f']['houses']}栋" for r in fq if not r["f"] or r["f"]["n"] < 1 or r["f"]["n"] < r["f"]["houses"]/16 or r["f"]["n"] > r["f"]["houses"]/4]
+    check("农田数量跟着房屋数走（18 个场景，约 8 栋房一块田，收成下限一半、上限翻倍内）", not fq1, f"不合格 {fq1}"[:300])
+    fq2 = [r["k"]+f"最远{r['f'] and r['f']['roadFar']}米" for r in fq if not r["f"] or r["f"]["roadFar"] > 40]
+    check("田接路网（每块田边离最近的路不超过 40 米）", not fq2, f"不合格 {fq2}"[:300])
     fo1 = pg.evaluate("()=>{sim.setParams({size:512,tg:'A',mc:true,zones:true});sim.generate(3);return sim.fingerprint()}")
     pg.evaluate("sim.setParams({zones:false});sim.generate(3)"); fo2 = pg.evaluate("sim.fingerprint()")
     pg.evaluate("sim.setParams({zones:false});sim.generate(3)"); fo3 = pg.evaluate("sim.fingerprint()")
