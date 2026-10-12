@@ -66,7 +66,8 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
     <div class="sep"></div>
     <div>城堡位置：<span id="cmode">自动</span></div>
     <button id="cauto">恢复自动选址</button>
-    <div class="tip">在 2D 俯视里可以直接拖动城堡。手动位置在改参数、换种子后都会保留。</div>
+    <button id="hauto" title="码头、作坊恢复自动选址">中心恢复自动</button>
+    <div class="tip">城堡、码头、作坊都能在 2D 俯视里直接拖，手动位置会保留。</div>
     <button id="earth">显示挖填方</button>
     <button id="copy">复制当前设置链接</button>
     <div class="sep"></div>
@@ -86,7 +87,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
 const CFG = { N: 129, SIZE: 256, HMAX: 32, RIVER_BED: 4, RIVER_BANK: 18 }; // 网格顶点数 / 地块边长(米) / 最大高度(米) / 河床半宽 / 河岸过渡宽度
 const TOWN = { s: { name: '小', r: 25 }, m: { name: '中', r: 40 }, l: { name: '大', r: 60 } };
 const P = { seed: 20261005, relief: 1, river: true, town: 'm', walls: 2, size: 256, tg: 'A', mc: true, zones: true };  // 生成参数
-const O = { castle: null };                                                 // 人工覆盖：重新生成时保留，不被自动结果冲掉
+const O = { castle: null, hubs: {} };                                        // 人工覆盖：城堡与功能中心的手动位置，重新生成时保留                                                 // 人工覆盖：重新生成时保留，不被自动结果冲掉
 const S = { mode: '2d', heights: null, minH: 0, maxH: 0, errors: [], view2d: null, webgl: false, river: null, autoCastle: null };
 window.addEventListener('error', e => S.errors.push(String(e.message)));
 const $ = id => document.getElementById(id);
@@ -195,6 +196,12 @@ function clampCastle(){ // 手动位置：限制在地块内；河道是硬边�
   if(ok(O.castle.x,O.castle.z))return;let best=null;
   for(let d=2;d<=200&&!best;d+=2)for(let k=0;k<32;k++){const a=k/32*Math.PI*2,x=O.castle.x+Math.cos(a)*d,z=O.castle.z+Math.sin(a)*d;if(ok(x,z)){best={x,z};break;}}
   if(best){O.castle=best;O.snapped=true;}}
+function clampHub(type){ // 手动中心：限制在地块内；拖进河道就滑到最近的离水位置
+  const h=O.hubs[type];if(!h)return;h.x=clamp(h.x,12,CFG.SIZE-12);h.z=clamp(h.z,12,CFG.SIZE-12);
+  if(riverDist(h.x,h.z)>=CFG.RIVER_BED+2)return;
+  let best=null;for(let d=4;d<=200&&!best;d+=4)for(let k=0;k<24;k++){const a=k/24*Math.PI*2,x=h.x+Math.cos(a)*d,z=h.z+Math.sin(a)*d;
+    if(x>12&&x<CFG.SIZE-12&&z>12&&z<CFG.SIZE-12&&riverDist(x,z)>=CFG.RIVER_BED+2){best={x,z};break;}}
+  if(best){h.x=best.x;h.z=best.z;}}
 
 // ===== 画布工具 =====
 const C2=$('c2d'), C3=$('c3d');
@@ -264,15 +271,23 @@ function draw2D(){
   ctx.fillStyle='#fff'; ctx.fillText('北',nx,ny+12*dpr);
 }
 function screenToWorld(ev){const v=S.view2d,r=C2.getBoundingClientRect();return {x:((ev.clientX-r.left)*v.dpr-v.ox)/v.sc,z:((ev.clientY-r.top)*v.dpr-v.oy)/v.sc};}
-let cdrag=false, dragRAF=0;
-C2.addEventListener('mousedown',ev=>{if(!S.view2d)return;const p=screenToWorld(ev),k=castle();if(Math.hypot(p.x-k.x,p.z-k.z)<=k.r){cdrag=true;ev.preventDefault();}});
+let cdrag=false, hdrag=null, dragRAF=0;
+function hubAt(p){ // 拖动抓取：中心圆（含 16 设备像素的容差）内可抓
+  if(!P.mc||!S.scene||!S.scene.hubs||!S.view2d)return null;
+  for(const h of S.scene.hubs)if(Math.hypot(p.x-h.x,p.z-h.z)<=Math.max(h.r+4,16/S.view2d.sc))return h;
+  return null;}
+C2.addEventListener('mousedown',ev=>{if(!S.view2d)return;const p=screenToWorld(ev),k=castle();
+  if(Math.hypot(p.x-k.x,p.z-k.z)<=k.r){cdrag=true;ev.preventDefault();return;}
+  const h=hubAt(p);if(h){hdrag=h.type;ev.preventDefault();}});
 function liveDrag(){const t=S.timing||{};return (t.build||0)+(t.audit||0)+(t.mesh||0)+(t.objects||0)+(t.map||0)<250;} // 生成够快就边拖边生成，否则拖动时只动骨架
-window.addEventListener('mouseup',()=>{if(cdrag){cdrag=false;S.preview=false;C2.style.cursor='grab';if(dragRAF){cancelAnimationFrame(dragRAF);dragRAF=0;}buildScene();syncPanel();refresh();writeHash();}});
+window.addEventListener('mouseup',()=>{if(cdrag||hdrag){cdrag=false;hdrag=null;S.preview=false;C2.style.cursor='grab';if(dragRAF){cancelAnimationFrame(dragRAF);dragRAF=0;}buildScene();syncPanel();refresh();writeHash();}});
 C2.addEventListener('mousemove',ev=>{
   const v=S.view2d; if(!v) return; const p=screenToWorld(ev), P2=$('probe');
-  if(cdrag){O.castle={x:p.x,z:p.z};clampCastle();const live=liveDrag();if(!live)S.preview=true;
+  if(hdrag){O.hubs[hdrag]={x:p.x,z:p.z};clampHub(hdrag);const live=liveDrag();if(!live)S.preview=true;
     if(!dragRAF)dragRAF=requestAnimationFrame(()=>{dragRAF=0;if(live)buildScene();syncPanel();refresh();});C2.style.cursor='grabbing';}
-  else{const k=castle();C2.style.cursor=Math.hypot(p.x-k.x,p.z-k.z)<=k.r?'grab':'default';}
+  else if(cdrag){O.castle={x:p.x,z:p.z};clampCastle();const live=liveDrag();if(!live)S.preview=true;
+    if(!dragRAF)dragRAF=requestAnimationFrame(()=>{dragRAF=0;if(live)buildScene();syncPanel();refresh();});C2.style.cursor='grabbing';}
+  else{const k=castle();C2.style.cursor=(Math.hypot(p.x-k.x,p.z-k.z)<=k.r||hubAt(p))?'grab':'default';}
   if(p.x<0||p.z<0||p.x>CFG.SIZE||p.z>CFG.SIZE){P2.innerHTML='移动鼠标到地形上查看坐标';return;}
   P2.innerHTML='X '+p.x.toFixed(1)+' 米　Z '+p.z.toFixed(1)+' 米<br>高度 '+heightAt(p.x,p.z).toFixed(2)+' 米'+(isWater(p.x,p.z)?'（河道）':'');
 });
@@ -345,7 +360,7 @@ function build3D(){
     data.set([x,h,z,n[0],n[1],n[2],col[0]/255,col[1]/255,col[2]/255],o);}
   gl.bindBuffer(gl.ARRAY_BUFFER,vbo); gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
 }
-function sceneCtx(){return {heightAt,riverDist,isWater,SIZE:CFG.SIZE,BED:CFG.RIVER_BED,HMAX:CFG.HMAX,castle:castle(),seed:P.seed,baseAt,townMode:P.tg,multi:P.mc,zones:P.zones!==false,riverX:(P.river&&S.river)?riverX:null,
+function sceneCtx(){return {heightAt,riverDist,isWater,SIZE:CFG.SIZE,BED:CFG.RIVER_BED,HMAX:CFG.HMAX,castle:castle(),seed:P.seed,baseAt,townMode:P.tg,multi:P.mc,zones:P.zones!==false,hubOverride:(P.mc&&Object.keys(O.hubs).length)?{...O.hubs}:null,riverX:(P.river&&S.river)?riverX:null,
   grid:{N:CFG.N,cell:CFG.SIZE/(CFG.N-1),h:S.heights,base:S.baseHeights,water:S.waterGrid}};}
 function buildScene(){ // 先恢复原始地形，再生成场景（场景会修正地形），最后按硬规则自检
   if(S.baseHeights) S.heights.set(S.baseHeights);
@@ -397,8 +412,8 @@ function drawScene2D(ctx){const sn=S.scene,v=S.view2d;if(!sn||!window.SCENE)retu
   if($('showzone')&&$('showzone').checked&&sn.zones&&!S.preview) drawZones(ctx,X,Y,d,v,sn.zones);
   if(P.mc&&sn.hubs&&sn.hubs.length){ctx.globalAlpha=1;ctx.font='bold '+(12*d)+'px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
     for(const h of sn.hubs){const cx=X(h.x),cy=Y(h.z),R=Math.max(7*d,h.r*v.sc),col=PLAN_COL[h.type]||'#fff';
-      ctx.beginPath();ctx.arc(cx,cy,R,0,Math.PI*2);ctx.fillStyle=col;ctx.globalAlpha=0.85;ctx.fill();ctx.globalAlpha=1;ctx.lineWidth=2*d;ctx.strokeStyle='#fff';ctx.stroke();
-      const tw=ctx.measureText(h.type).width+10*d,ty=cy-R-11*d;ctx.fillStyle='rgba(20,22,28,0.85)';ctx.fillRect(cx-tw/2,ty-9*d,tw,18*d);ctx.fillStyle=col;ctx.fillText(h.type,cx,ty);}
+      ctx.beginPath();ctx.arc(cx,cy,R,0,Math.PI*2);ctx.fillStyle=col;ctx.globalAlpha=0.85;ctx.fill();ctx.globalAlpha=1;ctx.lineWidth=2*d;ctx.strokeStyle=h.manual?'#ffd24a':'#fff';ctx.stroke();
+      const tw=ctx.measureText(h.type).width+10*d,ty=cy-R-11*d;ctx.fillStyle='rgba(20,22,28,0.85)';ctx.fillRect(cx-tw/2,ty-9*d,tw,18*d);ctx.fillStyle=col;ctx.fillText(h.type+(h.manual?'·手动':''),cx,ty);}
     ctx.textAlign='left';ctx.textBaseline='alphabetic';}
   if($('showq')&&$('showq').checked&&sn.quality&&!S.preview){ctx.globalAlpha=1;ctx.lineWidth=2.5*d;ctx.font=(11*d)+'px sans-serif';for(const it of sn.quality.items){const R=Math.max(9*d,10*v.sc);ctx.strokeStyle='#ff2a2a';ctx.beginPath();ctx.arc(X(it.x),Y(it.z),R,0,7);ctx.stroke();ctx.fillStyle='#ff2a2a';ctx.fillText(it.id,X(it.x)+R+2,Y(it.z)+4*d);}}
   if($('showplan')&&$('showplan').checked&&!S.preview) drawPlan(ctx,X,Y,d,v);
@@ -453,11 +468,13 @@ function setMode(m){S.mode=(m==='3d')?'3d':'2d';
   $('lbl3d').style.display='none'; refresh(); writeHash();}
 function setParams(o){Object.assign(P,o); clampCastle(); generate();}
 function resetCastle(){O.castle=null; buildScene(); syncPanel(); refresh(); writeHash();}
+function resetHubs(){O.hubs={}; buildScene(); syncPanel(); refresh(); writeHash();}
 function syncPanel(){
   $('seed').value=P.seed; $('relief').value=P.relief; $('vRelief').textContent=Number(P.relief).toFixed(1);
   $('river').checked=P.river; $('town').value=P.town; $('walls').value=String(P.walls); $('size').value=String(P.size);
   $('tg').value=P.tg; $('mc').checked=P.mc; $('mzone').checked=P.zones!==false;
-  const m=$('cmode'); m.textContent=O.castle?(O.snapped?'手动（已自动避开河道）':'手动（已覆盖自动结果）'):'自动'; m.className=O.castle?'manual':''; $('cauto').disabled=!O.castle;}
+  const m=$('cmode'); m.textContent=O.castle?(O.snapped?'手动（已自动避开河道）':'手动（已覆盖自动结果）'):'自动'; m.className=O.castle?'manual':''; $('cauto').disabled=!O.castle;
+  const hn=Object.keys(O.hubs).filter(k=>O.hubs[k]);$('hauto').disabled=!hn.length;}
 let flashT=0; function flash(t){S.flash=t;clearTimeout(flashT);refresh();flashT=setTimeout(()=>{S.flash='';refresh();},1800);}
 function refresh(){ if(!S.heights) return;
   if(S.mode==='2d') draw2D(); else render3D();
@@ -478,7 +495,9 @@ function refresh(){ if(!S.heights) return;
   $('status').textContent=S.flash||(S.errors.length?('⚠ '+S.errors[0]):(S.audit&&S.audit.total?('⚠ 硬规则有 '+S.audit.total+' 处违反（已标红）'):'就绪'));
 }
 function writeHash(){const q=new URLSearchParams();q.set('seed',P.seed);q.set('relief',P.relief);q.set('river',P.river?1:0);q.set('town',P.town);q.set('walls',P.walls);q.set('size',P.size);q.set('tg',P.tg);q.set('mc',P.mc?1:0);q.set('zones',P.zones!==false?1:0);
-  if(O.castle){q.set('cx',O.castle.x.toFixed(1));q.set('cz',O.castle.z.toFixed(1));} q.set('mode',S.mode);
+  if(O.castle){q.set('cx',O.castle.x.toFixed(1));q.set('cz',O.castle.z.toFixed(1));}
+  if(O.hubs['码头']){q.set('dkx',O.hubs['码头'].x.toFixed(1));q.set('dkz',O.hubs['码头'].z.toFixed(1));}
+  if(O.hubs['作坊']){q.set('wkx',O.hubs['作坊'].x.toFixed(1));q.set('wkz',O.hubs['作坊'].z.toFixed(1));} q.set('mode',S.mode);
   const u=location.href.split('#')[0]+'#'+q.toString(); try{history.replaceState(null,'',u);}catch(e){} }
 function readHash(){const q=new URLSearchParams(location.hash.slice(1));
   if(q.has('seed')) P.seed=Math.floor(Number(q.get('seed')))||0;
@@ -491,6 +510,8 @@ function readHash(){const q=new URLSearchParams(location.hash.slice(1));
   if(q.has('mc')) P.mc=q.get('mc')!=='0';
   if(q.has('zones')) P.zones=q.get('zones')!=='0';
   if(q.has('cx')&&q.has('cz')) O.castle={x:Number(q.get('cx')),z:Number(q.get('cz'))};
+  if(q.has('dkx')&&q.has('dkz')) O.hubs['码头']={x:Number(q.get('dkx')),z:Number(q.get('dkz'))};
+  if(q.has('wkx')&&q.has('wkz')) O.hubs['作坊']={x:Number(q.get('wkx')),z:Number(q.get('wkz'))};
   S.mode=q.get('mode')==='3d'?'3d':'2d';}
 $('gen').onclick=()=>generate($('seed').value);
 $('rnd').onclick=()=>generate(Math.floor(Math.random()*1e8));
@@ -505,7 +526,7 @@ $('size').onchange=e=>setParams({size:Number(e.target.value)});
 $('tg').onchange=e=>setParams({tg:e.target.value});
 $('mc').onchange=e=>setParams({mc:e.target.checked});
 $('mzone').onchange=e=>setParams({zones:e.target.checked});
-$('cauto').onclick=resetCastle;
+$('cauto').onclick=resetCastle; $('hauto').onclick=resetHubs;
 $('earth').onclick=()=>{S.showEarth=!S.showEarth;$('earth').textContent=S.showEarth?'隐藏挖填方':'显示挖填方';build3D();refresh();};
 $('copy').onclick=()=>{if(navigator.clipboard)navigator.clipboard.writeText(location.href).then(()=>flash('链接已复制'),()=>flash('复制失败，请直接复制地址栏'));else flash('请直接复制地址栏');};
 window.addEventListener('resize',refresh);
@@ -539,7 +560,7 @@ function exportPlan(){const s=S.scene,k=castle(),centers=[{id:'castle',type:'城
   for(const h of (s&&s.hubs)||[])centers.push({id:h.type==='码头'?'dock':'workshop',type:h.type,x:r1(h.x),z:r1(h.z),r:h.r,locked:false});
   residential().forEach((c,i)=>centers.push({id:'home'+(i+1),type:'居住',x:r1(c.x),z:r1(c.z),r:r1(c.r),n:c.n,locked:false}));
   const arterials=(s?s.roads:[]).filter(r=>r.main).map((r,i)=>({id:'a'+(i+1),w:r.w,pts:r.pts.map(p=>[r1(p[0]),r1(p[1])]),locked:false}));
-  return {version:PLAN_VER,params:{...P},overrides:{castle:O.castle?{x:O.castle.x,z:O.castle.z}:null},
+  return {version:PLAN_VER,params:{...P},overrides:{castle:O.castle?{x:O.castle.x,z:O.castle.z}:null,hubs:Object.keys(O.hubs).length?JSON.parse(JSON.stringify(O.hubs)):null},
     centers,arterials,zones:{cell:8,n:s&&s.zones?s.zones.n:0,labels:s&&s.zones?s.zones.lab.join(''):null,names:s&&s.zones?s.zones.names:null,painted:[]},fingerprint:sceneFingerprint(),savedAt:new Date().toISOString()};}
 function importPlan(pl){
   if(!pl||typeof pl!=='object'||pl.version!==PLAN_VER) return {ok:false,msg:'这个规划图的版本不对，没有导入'};
@@ -555,6 +576,8 @@ function importPlan(pl){
   np.zones=q.zones===true; // v0.12 存的规划图没有这一项：按关闭分区参数导入，保证重现原场景
   const oc=pl.overrides&&pl.overrides.castle;
   Object.assign(P,np); O.castle=(oc&&Number.isFinite(oc.x)&&Number.isFinite(oc.z))?{x:oc.x,z:oc.z}:null; O.snapped=false;
+  O.hubs={};const oh=pl.overrides&&pl.overrides.hubs;
+  if(oh)for(const t of ['码头','作坊'])if(oh[t]&&Number.isFinite(+oh[t].x)&&Number.isFinite(+oh[t].z))O.hubs[t]={x:+oh[t].x,z:+oh[t].z};
   generate(); const fp=sceneFingerprint();
   return {ok:true,same:pl.fingerprint?fp===pl.fingerprint:null,fingerprint:fp};}
 function planMsg(r){return !r.ok?r.msg:(r.same===false?'已导入，但场景和保存时不同（生成程序已更新过）':'已导入规划图，场景与保存时一致');}
@@ -611,6 +634,8 @@ window.sim={zones:()=>{const z=S.scene&&S.scene.zones;if(!z)return null;const {l
   setCam:(yaw,pitch,dist,tx,tz)=>{cam.yaw=yaw;cam.pitch=pitch;cam.dist=dist;cam.target=tx==null?[CFG.SIZE/2,6,CFG.SIZE/2]:[tx,heightAt(tx,tz)+2,tz];refresh();},
   params:()=>({...P}),
   setCastle:(x,z)=>{O.castle={x,z};clampCastle();buildScene();syncPanel();refresh();writeHash();},
+  setHub:(t,x,z)=>{if(t!=='码头'&&t!=='作坊')return {ok:false,msg:'中心类型不对（只有码头、作坊能拖）'};O.hubs[t]={x:+x,z:+z};clampHub(t);buildScene();syncPanel();refresh();writeHash();return {ok:true,manual:true};},
+  resetHubs:()=>{O.hubs={};buildScene();syncPanel();refresh();writeHash();return {ok:true};},
   toScreen:(x,z)=>{const v=S.view2d,r=C2.getBoundingClientRect();return {x:r.left+(v.ox+x*v.sc)/v.dpr,y:r.top+(v.oy+z*v.sc)/v.dpr};},
   waterCount:()=>{const N=CFG.N,c=CFG.SIZE/(N-1);let n=0;for(let j=0;j<N;j++)for(let i=0;i<N;i++)if(isWater(i*c,j*c))n++;return n;},
   state:()=>({seed:P.seed,mode:S.mode,N:CFG.N,size:CFG.SIZE,minH:S.minH,maxH:S.maxH,webgl:S.webgl,errors:S.errors.slice()})};

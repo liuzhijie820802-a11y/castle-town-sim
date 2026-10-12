@@ -278,7 +278,9 @@ function build(ctx){
         if(S.roads.length>n0)S.roads.splice(S.roads.indexOf(r),1);}
       return false;};
     const rank=(ok,score)=>{const L=[];for(let z=12;z<=SIZE-12;z+=4)for(let x=12;x<=SIZE-12;x+=4){if(ok(x,z))L.push({x,z,v:score(x,z)});}return L.sort((a,b)=>b.v-a.v);};
-    const place=(type,r,L,why)=>{if(!L.length){S.hubMiss.push(type+'：'+why);return null;}let tried=0;const used=[];
+    const place=(type,r,L,why)=>{const mv=ctx.hubOverride&&ctx.hubOverride[type]; // D3 第一步：手动拖过的中心优先用（在水里或路修不过去就退回自动选址）
+      if(mv&&Number.isFinite(+mv.x)&&Number.isFinite(+mv.z)){const hb={type,x:clamp(+mv.x,12,SIZE-12),z:clamp(+mv.z,12,SIZE-12),r,manual:true};if(riverDist(hb.x,hb.z)>=BED+2&&link(hb)){S.hubs.push(hb);return hb;}S.hubMiss.push(type+'：手动位置放不下，已用自动选址');}
+      if(!L.length){S.hubMiss.push(type+'：'+why);return null;}let tried=0;const used=[];
       for(const c of L){if(used.some(u=>Math.hypot(u.x-c.x,u.z-c.z)<12))continue;used.push(c);if(++tried>10)break;const hb={type,x:c.x,z:c.z,r};if(link(hb)){S.hubs.push(hb);return hb;}}
       S.hubMiss.push(type+'：路修不过去');return null;};
     if(riverX){ // 岸坡不再一刀切卡掉（河岸本来就是坡），改成打分：越平越好；中心本身会整平

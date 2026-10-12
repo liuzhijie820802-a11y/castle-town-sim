@@ -269,6 +269,35 @@ with sync_playwright() as p:
     zn_ = pg.evaluate("sim.zoneStats()")
     check("关掉「房屋按分区取参数」回到上一版房屋（场景变化且重复生成一致）", fo1 != fo2 and fo2 == fo3 and zn_ is None, f"开 {fo1} 关 {fo2}/{fo3}，关掉后统计 {zn_}")
     pg.evaluate("sim.setParams({zones:true});sim.generate(3)")
+    # ===== D3 第一步：2D 规划图拖动功能中心（码头、作坊）=====
+    pg.evaluate("()=>{sim.setParams({size:512,tg:'A',town:'m',mc:true,zones:true,relief:1,river:true});sim.generate(3)}")
+    fp0 = pg.evaluate("sim.fingerprint()")
+    dq = pg.evaluate("""()=>{const cands=[[140,-140],[140,140],[-140,-140],[-140,140],[170,-70],[70,170],[170,70]];
+      const a=sim.hubs().hubs.find(h=>h.type==='作坊');const out={tried:[]};const SZ=sim.state().size;
+      for(const [dx,dz] of cands){const x=Math.min(SZ-60,Math.max(60,a.x+dx)),z=Math.min(SZ-60,Math.max(60,a.z+dz));
+        const r=sim.setHub('作坊',x,z);const h=sim.hubs().hubs.find(h=>h.type==='作坊');
+        out.tried.push(Math.round(x)+','+Math.round(z)+'→'+(h&&h.manual?'手动@'+Math.round(h.x)+','+Math.round(h.z):'失败'));
+        if(r.ok&&h&&h.manual&&Math.abs(h.x-x)<0.6&&Math.abs(h.z-z)<0.6){out.ok=true;out.x=h.x;out.z=h.z;out.link=h.link;break;}}
+      return out}""")
+    check("拖动作坊中心：中心挪到拖到的地方并带手动标记", dq.get("ok"), json.dumps(dq, ensure_ascii=False)[:300])
+    check("手动中心自己修路接进了路网", dq.get("ok") and dq.get("link") is not None, f"link={dq.get('link')}")
+    fp1 = pg.evaluate("sim.fingerprint()")
+    cs = pg.evaluate("()=>{const c=sim.conn()||{};return {iso:c.isolated,h:sim.scene().houses,e:sim.state().errors.length}}")
+    check("拖动后场景跟着重生成（房屋有、孤屋 0、无报错）", fp1 != fp0 and cs["h"] > 0 and cs["iso"] == 0 and cs["e"] == 0, json.dumps(cs))
+    tms = pg.evaluate("sim.timing().build")
+    print(f"[d3] 拖动后重新生成耗时 {tms:.0f} ms（拖到出图）")
+    pg.evaluate("sim.resetHubs()")
+    check("恢复自动选址后场景和拖动前完全一致", pg.evaluate("sim.fingerprint()") == fp0)
+    pg.evaluate(f"()=>sim.setHub('作坊',{dq['x']},{dq['z']})")
+    fp2 = pg.evaluate("sim.fingerprint()")
+    pl = pg.evaluate("sim.exportPlan()")
+    has = bool(pl["overrides"].get("hubs") and "作坊" in pl["overrides"]["hubs"])
+    pg.evaluate("sim.resetHubs()")
+    rr = pg.evaluate("p => sim.importPlan(p)", pl)
+    check("拖动的中心存进规划图，导入后原样恢复", has and rr["ok"] and pg.evaluate("sim.fingerprint()") == fp2 and pg.evaluate("()=>{const h=sim.hubs().hubs.find(h=>h.type==='作坊');return !!(h&&h.manual)}"), json.dumps(rr, ensure_ascii=False)[:200])
+    pg.evaluate("sim.resetHubs()")
+    bad = pg.evaluate("()=>sim.setHub('教堂',10,10)")
+    check("拖不存在的中心被拒绝（只有码头、作坊能拖）", not bad["ok"], json.dumps(bad, ensure_ascii=False))
     pg.evaluate("()=>{sim.setParams({size:256,tg:'A',town:'m',mc:true});sim.generate(20261005)}")
     st = pg.evaluate("sim.state()")
     check("全程无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), "; ".join(l for l in logs if "pageerror" in l)[:200])
