@@ -384,7 +384,11 @@ function build(ctx){
           cands.push({b,h,score,slot});}}}}
   lap('房屋候选');
   for(const r of S.roads){let x0=1e9,z0=1e9,x1=-1e9,z1=-1e9;for(const q of r.pts){x0=Math.min(x0,q[0]);z0=Math.min(z0,q[1]);x1=Math.max(x1,q[0]);z1=Math.max(z1,q[1]);}r.bb=[x0,z0,x1,z1];}
-  const nearRoad=(x,z,m)=>S.roads.some(r=>{const e=r.w/2+m;return x>=r.bb[0]-e&&x<=r.bb[2]+e&&z>=r.bb[1]-e&&z<=r.bb[3]+e&&roadDist(r,x,z)<e;});
+  // r19（D4 第二步）：路段空间索引（16 米格）。落位贴路、农田接路/压路查询从「每点扫全部路的每一段」改为「只查附近格子的路段」；查询半径 46 米内逐段精确算距离，判定结果与全量扫完全一致（所有用到阈值 ≤ 路半宽+1 ≤ 46）
+  const SEGI=new Map();
+  for(const r of S.roads){const p=r.pts;for(let i=0;i<p.length-1;i++){const ax=p[i][0],az=p[i][1],bx=p[i+1][0],bz=p[i+1][1],pad=r.w/2+GC+1,g0x=Math.floor((Math.min(ax,bx)-pad)/GC),g1x=Math.floor((Math.max(ax,bx)+pad)/GC),g0z=Math.floor((Math.min(az,bz)-pad)/GC),g1z=Math.floor((Math.max(az,bz)+pad)/GC),sg={r,ax,az,bx,bz};for(let gz=g0z;gz<=g1z;gz++)for(let gx=g0x;gx<=g1x;gx++){const k=gx*4096+(gz+2048);let a=SEGI.get(k);if(!a)SEGI.set(k,a=[]);a.push(sg);}}}
+  const SNR=46;let QID=0; // 盖戳去重：同一路段在同一次查询里只算一次，全程零分配
+  const nearRoad=(x,z,m)=>S.roads.some(r=>{const e=r.w/2+m;return x>=r.bb[0]-e&&x<=r.bb[2]+e&&z>=r.bb[1]-e&&z<=r.bb[3]+e&&roadDist(r,x,z)<e;}); // 老版按路包围盒预筛，实测已够快
   cands.sort((a,b)=>b.score-a.score);let built=0;const used=new Set();
   const placeBox=(c,roadM,boxM)=>{const b=c.b;
     if(footprint(b).some(q=>nearRoad(q[0],q[1],roadM))){RJ.road++;return false;}
@@ -418,7 +422,7 @@ function build(ctx){
     if(mode==='A'){if(dc<Math.max(K.townR*0.85,S.rOut+12)||dc>K.townR+70)return null;}
     else{if(dc<S.rOut+12)return null;let inT=false;fd=1e9;for(const c of S.centers){const d=Math.hypot(x-c.x,z-c.z);if(d<c.R*0.9)inT=true;fd=Math.min(fd,d-c.R);}if(inT||fd>70)return null;}
     return fd;};
-  const roadGap=f=>Math.min(...footprint(f).map(q=>Math.min(...S.roads.map(r=>roadDist(r,q[0],q[1])-r.w/2))));
+  const roadGap=f=>{let m=1e9;for(const q of footprint(f)){const qid=++QID,x=q[0],z=q[1],g0x=Math.floor((x-SNR)/GC),g1x=Math.floor((x+SNR)/GC),g0z=Math.floor((z-SNR)/GC),g1z=Math.floor((z+SNR)/GC);for(let gz=g0z;gz<=g1z;gz++)for(let gx=g0x;gx<=g1x;gx++){const a=SEGI.get(gx*4096+(gz+2048));if(a)for(let i=0;i<a.length;i++){const sg=a[i];if(sg.q===qid)continue;sg.q=qid;const e=segDist(x,z,sg.ax,sg.az,sg.bx,sg.bz)-sg.r.w/2;if(e<m)m=e;}}}return m;};
   const tryField=(x,z,yaw,vmax)=>{const fd=bandFd(x,z);if(fd===null)return;
     const f={kind:'field',x,z,w:10,d:15,yaw};
     if(corners(f).some(c=>!inMap(c[0],c[1],1))||wet(f,2))return;const v=gmax(f)-gmin(f);if(v>vmax)return;
@@ -438,7 +442,7 @@ function build(ctx){
   const fieldTarget=Math.min(fieldCap,Math.max(4,Math.round(housesN/8))); // D2 第四步：农田面积按房屋数算（约 8 栋房一块田），不再按环带面积封顶
   let roadFar=0;
   for(const c of fc){if(S.fields.length>=fieldTarget)break;const f=c.f;
-    if(footprint(f).some(q=>S.roads.some(r=>roadDist(r,q[0],q[1])<r.w/2+1)))continue;
+    if(footprint(f).some(q=>nearRoad(q[0],q[1],1)))continue;
     if(S.fields.some(o=>overlapRect(o,f,1))||hitsBox(f,1))continue;
     roadFar=Math.max(roadFar,c.mr);
     f.col=S.fields.length%2?'field1':'field2';S.fields.push(f);}

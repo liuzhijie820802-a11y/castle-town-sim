@@ -428,6 +428,12 @@ with sync_playwright() as p:
     oktb = bool(tb) and all(tb.get(k, 0) > 0 for k in ("农田", "房屋落位", "房屋候选"))
     check("分段计时输出完整（农田、房屋落位、房屋候选三段可读）", oktb, str(top3))
     print(f"[d4] 512 米分段耗时前三：{top3}（农田+落位+候选占大头，分块缓存先做这三段）")
+    # ===== D4 第二步：路段空间索引加速（只提速不改输出：指纹必须与 v0.13.5 完全一致）=====
+    fps = {}
+    for tgv, want in (("A", "785b2ccc"), ("B", "017b1b3e"), ("C", "017b1b3e")):
+        fps[tgv] = pg.evaluate("(tg)=>{sim.setParams({size:512,town:'m',tg:tg,relief:1,mc:true,zones:true,river:true});sim.generate(3);return sim.fingerprint();}", tgv)
+    check("空间索引后场景与 v0.13.5 完全一致（512A/512B/512C 指纹不变）", fps == {"A": "785b2ccc", "B": "017b1b3e", "C": "017b1b3e"}, json.dumps(fps))
+    print(f"[d4] 空间索引后指纹：{fps}")
     check("全程无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), "; ".join(l for l in logs if "pageerror" in l)[:200])
     b.close()
 fails = [r for r in results if not r[1]]
