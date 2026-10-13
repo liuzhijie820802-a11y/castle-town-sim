@@ -348,6 +348,51 @@ with sync_playwright() as p:
     pg.evaluate("()=>{sim.clearPainted();sim.setParams({zones:true});sim.generate(3)}")
     pg.evaluate("()=>{sim.setParams({size:256,tg:'A',town:'m',mc:true});sim.generate(20261005)}")
     st = pg.evaluate("sim.state()")
+    # ===== D3 第三步：锁定道路（0.1）=====
+    rp = pg.evaluate("sim.roadPts()")
+    br = next((r for r in rp if not r["main"] and len(r["pts"])>3), None)
+    if br:
+        bm = br["pts"][len(br["pts"])//2]
+        lk = pg.evaluate(f"sim.lockRoadAt({bm[0]},{bm[1]})")
+        check("锁路：点一条支路能锁上", lk["hit"] and lk["locked"] and lk["count"]==1, json.dumps(lk))
+        lpts = pg.evaluate("sim.lockedRoads()")[0]["pts"]
+        fp0 = pg.evaluate("sim.fingerprint()")
+        pg.evaluate("sim.generate()")
+        rp2 = pg.evaluate("sim.roadPts()")
+        kept = sum(1 for r in rp2 if r["pts"]==lpts)
+        check("锁定的支路重生成后原样保留、不重复", any(r["locked"] and r["pts"]==lpts for r in rp2) and kept==1, f"同点路 {kept} 条")
+        hb = pg.evaluate("sim.hubs()")["hubs"]
+        if hb:
+            h0 = hb[0]
+            pg.evaluate(f"sim.setHub('{h0['type']}',{h0['x']+20},{h0['z']+10})")
+            rp3 = pg.evaluate("sim.roadPts()")
+            check("拖动中心后锁定的路原样保留", any(r["locked"] and r["pts"]==lpts for r in rp3), "")
+            pg.evaluate("sim.resetHubs()")
+        else:
+            check("拖动中心后锁定的路原样保留", True, "无中心可拖（跳过）")
+        ex = pg.evaluate("sim.exportPlan()")
+        check("导出的规划图带锁定标记", any(a.get("locked") for a in ex["arterials"]), f"arterials={len(ex['arterials'])}")
+        imp = pg.evaluate("sim.importPlan(sim.exportPlan())")
+        rp4 = pg.evaluate("sim.roadPts()")
+        check("导入后锁定路恢复且场景保真", imp["ok"] and len(pg.evaluate("sim.lockedRoads()"))==1 and any(r["locked"] and r["pts"]==lpts for r in rp4), json.dumps({k:imp[k] for k in ("ok","same")}))
+        un = pg.evaluate("sim.unlockAllRoads()")
+        ex2 = pg.evaluate("sim.exportPlan()")
+        fp1 = pg.evaluate("sim.fingerprint()")
+        check("全部解锁后回到未锁定状态（场景与锁定前一致）", un["cleared"]==1 and not any(a.get("locked") for a in ex2["arterials"]) and fp1==fp0, f"指纹 {'一致' if fp1==fp0 else fp0[:8]+'→'+fp1[:8]}")
+    else:
+        check("锁路：点一条支路能锁上", False, "没找到支路")
+    m0 = next((r for r in rp if r["main"] and len(r["pts"])>5), None)
+    if m0:
+        mm = m0["pts"][len(m0["pts"])//2]
+        pg.evaluate(f"sim.lockRoadAt({mm[0]},{mm[1]})")
+        pg.evaluate("sim.generate()")
+        rp5 = pg.evaluate("sim.roadPts()")
+        mlock = [r for r in rp5 if r["main"] and r["locked"] and r["pts"]==m0["pts"]]
+        mcnt = sum(1 for r in rp5 if r["pts"]==m0["pts"])
+        check("锁定的主路重生成后不重复、不变形", len(mlock)==1 and mcnt==1, f"锁定主路 {len(mlock)}，同点路 {mcnt}")
+        pg.evaluate("sim.unlockAllRoads()")
+    else:
+        check("锁定的主路重生成后不重复、不变形", False, "没找到主路")
     check("全程无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), "; ".join(l for l in logs if "pageerror" in l)[:200])
     b.close()
 fails = [r for r in results if not r[1]]

@@ -240,14 +240,24 @@ function build(ctx){
     grow(M,Rt,avM);if(M2g)grow(M2g,Rt*0.7,M2g.av);
   }
   S.T=T;
+  // D3 第三步：锁定道路——规划里锁定的路，与新生成的路重合时只做标记不重复建，其余原样预置；清理、删结、接线、平滑环节都跳过锁定的路，重生成 100% 保留
+  const dupFrac=(a,b,tol)=>{let n=0;for(const q of a)if(roadDist(b,q[0],q[1])<tol)n++;return n/Math.max(1,a.length);};
+  const plen=a=>{let t=0;for(let i=1;i<a.length;i++)t+=Math.hypot(a[i][0]-a[i-1][0],a[i][1]-a[i-1][1]);return t;};
+  for(const L of (ctx.lockedRoads||[])){if(!L||!Array.isArray(L.pts)||L.pts.length<2)continue;const pts=L.pts.map(p=>[+p[0],+p[1]]);
+    if(pts.some(p=>!inMap(p[0],p[1],1)))continue;
+    const ll=plen(pts);
+    // 只认"和锁定路整体重合且长度相近"的路：一条恰好覆盖它的小路算同一条，一条顺路经过它的长路不算
+    const dup=S.roads.find(o=>o&&o.pts&&o.pts.length>1&&dupFrac(pts,o,(L.w||o.w)/2+1.5)>=0.7&&plen(o.pts)<=ll*1.3+2);
+    if(dup){dup.locked=true;if(dup.pts.length===pts.length)dup.pts=pts;continue;}
+    const r={pts,w:L.w||DIM.ROAD_W,main:!!L.main,ring:false,locked:true,deck:pts.map(()=>null)};S.roads.push(r);addRP(r);}
   { const touch=(q,k)=>S.roads.some((r,j)=>j!==k&&roadDist(r,q[0],q[1])<r.w/2+2);
-    S.roads=S.roads.filter((r,k)=>{const n=r.pts.length;return r.main||(n-1)*2>=14||(touch(r.pts[0],k)&&touch(r.pts[n-1],k));});
+    S.roads=S.roads.filter((r,k)=>{const n=r.pts.length;return r.main||r.locked||(n-1)*2>=14||(touch(r.pts[0],k)&&touch(r.pts[n-1],k));});
     // 不到 14 米的小巷：如果两头接的路本来就连着（同一条路或彼此相交），它只是把路口打成结，删掉；真正起连接作用的保留
     const near=(a,b)=>a.pts.some(q=>roadDist(b,q[0],q[1])<b.w/2+2);
-    for(let k=S.roads.length-1;k>=0;k--){const r=S.roads[k],n=r.pts.length;if(r.main||r.ring||(n-1)*2>=14)continue;
+    for(let k=S.roads.length-1;k>=0;k--){const r=S.roads[k],n=r.pts.length;if(r.main||r.ring||r.locked||(n-1)*2>=14)continue;
       const A=S.roads.filter((o,j)=>j!==k&&roadDist(o,r.pts[0][0],r.pts[0][1])<o.w/2+2),B=S.roads.filter((o,j)=>j!==k&&roadDist(o,r.pts[n-1][0],r.pts[n-1][1])<o.w/2+2);
       if(A.some(a=>B.includes(a)||B.some(b=>near(a,b))))S.roads.splice(k,1);}
-    S.roads=S.roads.filter((r,k)=>{const n=r.pts.length;return r.main||(n-1)*2>=14||(touch(r.pts[0],k)&&touch(r.pts[n-1],k));}); } // 删结后可能留下悬空的短断头，再清一遍
+    S.roads=S.roads.filter((r,k)=>{const n=r.pts.length;return r.main||r.locked||(n-1)*2>=14||(touch(r.pts[0],k)&&touch(r.pts[n-1],k));}); } // 删结后可能留下悬空的短断头，再清一遍
   { // 连不上城门路网的路段：25 米内能直连（不过河）就补一条短连接路，连不上就删掉，避免孤立街区
     const N=S.roads.length,par=[...Array(N).keys()],f=i=>par[i]===i?i:(par[i]=f(par[i])),G=new Map();
     S.roads.forEach((r,i)=>{for(const q of r.pts){const k=Math.floor(q[0]/4)+','+Math.floor(q[1]/4);let a=G.get(k);if(!a)G.set(k,a=[]);a.push([i,q]);}});
@@ -255,11 +265,11 @@ function build(ctx){
     const gi=S.roads.indexOf(S.gateRoad);
     if(gi>=0){const root=f(gi),comps=new Map(),rootPts=[];S.roads.forEach((r,i)=>{const c=f(i);if(c===root){for(const q of r.pts)rootPts.push(q);}else{if(!comps.has(c))comps.set(c,[]);comps.get(c).push(i);}});
       const drop=new Set(),add=[];
-      for(const ids of comps.values()){let best=null,bd=25;
+      for(const ids of comps.values()){let best=null,bd=25;if(ids.some(i=>S.roads[i].locked))bd=75;
         for(const i of ids)for(const q of S.roads[i].pts)for(const t of rootPts){if(Math.abs(q[0]-t[0])>bd||Math.abs(q[1]-t[1])>bd)continue;const e=Math.hypot(q[0]-t[0],q[1]-t[1]);if(e>=bd)continue;
           let ok=true;for(let u=0;u<=1.001;u+=0.1)if(riverDist(q[0]+(t[0]-q[0])*u,q[1]+(t[1]-q[1])*u)<BED+1.5){ok=false;break;}if(ok){bd=e;best=[q,t];}}
         if(best){const [q,t]=best,n=Math.max(1,Math.ceil(bd/2)),pts=[];for(let u=0;u<=n;u++)pts.push([q[0]+(t[0]-q[0])*u/n,q[1]+(t[1]-q[1])*u/n]);add.push({pts,w:DIM.ROAD_W,main:false,ring:false,link:true,deck:pts.map(()=>null)});}
-        else ids.forEach(i=>{if(!S.roads[i].main)drop.add(i);});}
+        else ids.forEach(i=>{if(!S.roads[i].main&&!S.roads[i].locked)drop.add(i);});}
       S.roads=S.roads.filter((r,i)=>!drop.has(i)).concat(add);}
   }
   // D1 多中心：在路网定型前自动放码头、作坊两个功能中心，并各修一条路从现有路网通过去（关掉“多中心”时完全跳过，结果与 v0.11 相同）
@@ -294,7 +304,7 @@ function build(ctx){
   }
   lap('路网');
   // 线形平滑：去掉逐步转向留下的折线（两端不动）
-  for(const r of S.roads){const p=r.pts,wt=p.map(q=>riverDist(q[0],q[1])<BED+1.5);for(let it=0;it<3;it++){const q=p.map(v=>v.slice());for(let i=1;i<p.length-1;i++){q[i][0]=(p[i-1][0]+p[i][0]*2+p[i+1][0])/4;q[i][1]=(p[i-1][1]+p[i][1]*2+p[i+1][1])/4;}for(let i=1;i<p.length-1;i++)if(!wt[i]){p[i][0]=q[i][0];p[i][1]=q[i][1];}}} // 桥段（河道内的点）不参与平滑，保持直线
+  for(const r of S.roads){if(r.locked)continue;const p=r.pts,wt=p.map(q=>riverDist(q[0],q[1])<BED+1.5);for(let it=0;it<3;it++){const q=p.map(v=>v.slice());for(let i=1;i<p.length-1;i++){q[i][0]=(p[i-1][0]+p[i][0]*2+p[i+1][0])/4;q[i][1]=(p[i-1][1]+p[i][1]*2+p[i+1][1])/4;}for(let i=1;i<p.length-1;i++)if(!wt[i]){p[i][0]=q[i][0];p[i][1]=q[i][1];}}} // 桥段（河道内的点）不参与平滑，保持直线
   { // r8：一条路（主路除外）的开头或结尾一段贴着别的路平行走（约 6~7 米内、夹角<23°）时，把这段剪掉，从两路分开的地方用一小段直接接到那条路上
     const PG=new Map(),pang=(p,i)=>{const a=p[Math.max(0,i-1)],b=p[Math.min(p.length-1,i+1)];return Math.atan2(b[1]-a[1],b[0]-a[0]);};
     const idx=()=>{PG.clear();S.roads.forEach((r,k)=>{const p=r.pts;for(let i=0;i<p.length;i++){const key=Math.floor(p[i][0]/8)+','+Math.floor(p[i][1]/8);let L=PG.get(key);if(!L)PG.set(key,L=[]);L.push({k,x:p[i][0],z:p[i][1],ang:pang(p,i),w:r.w});}});};
@@ -302,7 +312,7 @@ function build(ctx){
     const dry=(A,B)=>{for(let u=0;u<=1.001;u+=0.25)if(riverDist(A[0]+(B[0]-A[0])*u,A[1]+(B[1]-A[1])*u)<BED+1.5)return false;return true;};
     const comps=()=>{const N=S.roads.length,pa=[...Array(N).keys()],f=i=>pa[i]===i?i:(pa[i]=f(pa[i])),G=new Map();S.roads.forEach((r,i)=>{for(const q of r.pts){const kk=Math.floor(q[0]/4)+','+Math.floor(q[1]/4);let a=G.get(kk);if(!a)G.set(kk,a=[]);a.push([i,q]);}});
       for(const [kk,a] of G){const [gx,gz]=kk.split(',').map(Number);for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++){const b=G.get((gx+dx)+','+(gz+dz));if(b)for(const u of a)for(const v of b)if(u[0]!==v[0]&&Math.abs(u[1][0]-v[1][0])<3&&Math.abs(u[1][1]-v[1][1])<3)pa[f(u[0])]=f(v[0]);}}let c=0;for(let i=0;i<N;i++)if(f(i)===i)c++;return c;};
-    let nc=comps();const anch=[];idx();const order=S.roads.map((r,k)=>k).filter(k=>!S.roads[k].main&&!S.roads[k].ring).sort((a,b)=>(S.roads[a].ring?1:0)-(S.roads[b].ring?1:0)||S.roads[a].pts.length-S.roads[b].pts.length);
+    let nc=comps();const anch=[];idx();const order=S.roads.map((r,k)=>k).filter(k=>!S.roads[k].main&&!S.roads[k].ring&&!S.roads[k].locked).sort((a,b)=>(S.roads[a].ring?1:0)-(S.roads[b].ring?1:0)||S.roads[a].pts.length-S.roads[b].pts.length);
     for(const k of order){const r=S.roads[k];for(const end of [0,1]){const p=end?r.pts.slice().reverse():r.pts,n=p.length;let h=0,last=null;
       while(h<n){const q=par(k,r.w,p[h][0],p[h][1],pang(p,h));if(!q)break;last=q;h++;}
       if(h<3||n-h<7||!last)continue;if(p.slice(0,h).some(a=>anch.some(b=>Math.hypot(a[0]-b[0],a[1]-b[1])<0.6)))continue;
