@@ -393,6 +393,35 @@ with sync_playwright() as p:
         pg.evaluate("sim.unlockAllRoads()")
     else:
         check("锁定的主路重生成后不重复、不变形", False, "没找到主路")
+    # ===== D4 第一步：局部性与拖动耗时基线（只测不改：为分块缓存/局部重生成定基线）=====
+    pg.evaluate("()=>{sim.setParams({size:512,tg:'A',town:'m',mc:true,zones:true,relief:1,river:true});sim.generate(3)}")
+    d4r = pg.evaluate("""()=>{
+      const a=sim.hubs().hubs.find(h=>h.type==='作坊');
+      if(!a)return {ok:false,why:'无作坊中心'};
+      const old=[a.x,a.z];
+      const hs1=S.scene.boxes.filter(b=>b.kind==='house').map(b=>[b.x,b.z]);
+      const SZ=sim.state().size;
+      const cands=[[180,180],[-180,-180],[180,-180],[-180,180],[240,120],[-240,-120],[120,240]];
+      let placed=null;
+      for(const [dx,dz] of cands){
+        const x=Math.min(SZ-60,Math.max(60,a.x+dx)),z=Math.min(SZ-60,Math.max(60,a.z+dz));
+        const r=sim.setHub('作坊',x,z);
+        const h=sim.hubs().hubs.find(h=>h.type==='作坊');
+        if(r.ok&&h&&h.manual&&Math.hypot(h.x-old[0],h.z-old[1])>=150){placed=[h.x,h.z];break;}
+      }
+      if(!placed)return {ok:false,why:'没找到距原中心 150 米以上的合法位置'};
+      const hs2=S.scene.boxes.filter(b=>b.kind==='house').map(b=>[b.x,b.z]);
+      const key=p=>Math.round(p[0]*2)/2+','+Math.round(p[1]*2)/2;
+      const s1=new Set(hs1.map(key));
+      const far1=hs1.filter(p=>Math.hypot(p[0]-old[0],p[1]-old[1])>150);
+      const kept=far1.filter(p=>s1.has(key(p))).length;
+      const ratio=far1.length?kept/far1.length:1;
+      const t=sim.timing()||{};const ms=(t.build||0)+(t.audit||0)+(t.mesh||0)+(t.objects||0)+(t.map||0);
+      sim.resetHubs();
+      return {ok:true,far:far1.length,kept,kept2:hs2.length,hs1:hs1.length,hs2:hs2.length,ratio:Math.round(ratio*1000)/1000,ms:Math.round(ms)};
+    }""")
+    check("局部性：拖动作坊中心后 150 米以外房屋不变比例≥90%", d4r.get("ok") and d4r.get("ratio",0)>=0.9, json.dumps(d4r, ensure_ascii=False))
+    print(f"[d4] 512 米拖动到出图耗时 {d4r.get('ms','?')} ms（D4 目标 ≤300 ms，当前为全量重生成的基线）；150 米外房屋 {d4r.get('far','?')} 栋中不变 {d4r.get('kept','?')} 栋")
     check("全程无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), "; ".join(l for l in logs if "pageerror" in l)[:200])
     b.close()
 fails = [r for r in results if not r[1]]
