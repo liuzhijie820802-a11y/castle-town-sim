@@ -53,7 +53,7 @@ with sync_playwright() as p:
     pg.evaluate("sim.setParams({relief:1.3,river:false,town:'s',walls:1})")
     href = pg.evaluate("location.href"); hs = pg.evaluate(H3); kc = pg.evaluate("sim.castle()")
     pg.goto("about:blank"); pg.goto(href); pg.wait_for_timeout(800)
-    same = pg.evaluate("sim.params()") == {"seed":20261005,"relief":1.3,"river":False,"town":"s","walls":1,"size":256,"tg":"A","mc":True,"zones":True} and pg.evaluate(H3) == hs and pg.evaluate("sim.castle()") == kc
+    same = pg.evaluate("sim.params()") == {"seed":20261005,"relief":1.3,"river":False,"town":"s","walls":1,"size":256,"tg":"A","mc":True,"zones":True,"partial":False} and pg.evaluate(H3) == hs and pg.evaluate("sim.castle()") == kc
     check("网址可复现全部参数", same, href.split("#")[1])
 
     # ===== 人工覆盖：拖动城堡 =====
@@ -434,6 +434,33 @@ with sync_playwright() as p:
         fps[tgv] = pg.evaluate("(tg)=>{sim.setParams({size:512,town:'m',tg:tg,relief:1,mc:true,zones:true,river:true});sim.generate(3);return sim.fingerprint();}", tgv)
     check("空间索引后场景与 v0.13.5 完全一致（512A/512B/512C 指纹不变）", fps == {"A": "785b2ccc", "B": "017b1b3e", "C": "017b1b3e"}, json.dumps(fps))
     print(f"[d4] 空间索引后指纹：{fps}")
+    # ===== D4 分块缓存第一小步：农田复用（拖动只重算附近，远处农田沿用；开关默认关）=====
+    pd = pg.evaluate("sim.params().partial")
+    check("局部重生成开关默认关闭（默认行为与 v0.13.6 一致）", pd is False, f"partial={pd}")
+    fr = pg.evaluate("""()=>{const out=[];for(const sd of [2,3,5]){
+      sim.setParams({size:512,tg:'A',town:'m',mc:true,zones:true,relief:1,river:true,partial:false});sim.resetHubs();sim.generate(sd);
+      const a=sim.hubs().hubs.find(h=>h.type==='作坊');
+      sim.setHub('作坊',a.x+40,a.z);const h=sim.hubs().hubs.find(h=>h.type==='作坊');
+      const far=sim.fields().filter(f=>Math.hypot(f.x-a.x,f.z-a.z)>=150&&Math.hypot(f.x-h.x,f.z-h.z)>=150).map(f=>Math.round(f.x)+','+Math.round(f.z)).sort();
+      out.push({sd,far,t:sim.timing().build});}return out}""")
+    ru = pg.evaluate("""()=>{const out=[];for(const sd of [2,3,5]){
+      sim.setParams({size:512,tg:'A',town:'m',mc:true,zones:true,relief:1,river:true,partial:true});sim.resetHubs();sim.generate(sd);
+      const a=sim.hubs().hubs.find(h=>h.type==='作坊');
+      sim.setHub('作坊',a.x+40,a.z);const h=sim.hubs().hubs.find(h=>h.type==='作坊');
+      const far=sim.fields().filter(f=>Math.hypot(f.x-a.x,f.z-a.z)>=150&&Math.hypot(f.x-h.x,f.z-h.z)>=150).map(f=>Math.round(f.x)+','+Math.round(f.z)).sort();
+      const fs=sim.fieldStats();
+      out.push({sd,far,reused:fs.reused,n:fs.n,houses:fs.houses,t:sim.timing().build,iso:sim.conn().isolated,e:sim.state().errors.length});}return out}""")
+    print("[d4] 农田复用实测（全量→复用，毫秒）：" + "; ".join(f"s{r['sd']}: {f['t']:.0f}→{r['t']:.0f} 复用{r['reused']}/{r['n']}" for r,f in zip(ru,fr)))
+    keep = [r["sd"] for r,f in zip(ru,fr) if len(f["far"])>=5 and len(set(r["far"])&set(f["far"]))>=0.5*len(f["far"])]
+    check("打开局部重生成拖动 40 米：远处农田过半原样保留，孤屋 0、无报错", len(keep)==len(ru) and all(r["iso"]==0 and r["e"]==0 for r in ru), json.dumps([{k:r[k] for k in ("sd","reused","n","t","iso","e")} for r in ru]))
+    check("打开局部重生成拖动：远处农田确实被复用（不再重新撒候选）", all(r["reused"]>0 for r in ru), json.dumps([r["reused"] for r in ru]))
+    badc = [r["sd"] for r in ru if not (r["houses"]/16<=r["n"]<=r["houses"]/4+1)]
+    check("局部重生成后农田数量仍跟房屋数走", not badc, str(badc))
+    pg.evaluate("()=>{sim.setParams({partial:false});sim.resetHubs();sim.generate(3);const a=sim.hubs().hubs.find(h=>h.type==='作坊');sim.setHub('作坊',a.x+40,a.z)}")
+    fpA = pg.evaluate("sim.fingerprint()")
+    pg.evaluate("()=>{sim.setParams({partial:true});sim.resetHubs();sim.generate(3);const a=sim.hubs().hubs.find(h=>h.type==='作坊');sim.setHub('作坊',a.x+40,a.z)}")
+    pg.evaluate("()=>{sim.setParams({partial:false});sim.resetHubs();sim.generate(3);const a=sim.hubs().hubs.find(h=>h.type==='作坊');sim.setHub('作坊',a.x+40,a.z)}")
+    check("关掉局部重生成后回到全量重生成（指纹与从未开启时一致）", pg.evaluate("sim.fingerprint()")==fpA)
     check("全程无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), "; ".join(l for l in logs if "pageerror" in l)[:200])
     b.close()
 fails = [r for r in results if not r[1]]

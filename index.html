@@ -28,7 +28,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
 #panel button{width:100%;margin-top:6px;background:#363b47;border:1px solid #4a5060;color:#e8e8e8;padding:5px;border-radius:4px;cursor:pointer;font-size:12px}
 #panel button:disabled{opacity:.45;cursor:default}
 #panel .two{display:flex;gap:6px}
-#panel{max-height:calc(100vh - 40px);overflow-y:auto;box-sizing:border-box}
+#panel{max-height:calc(100vh - 92px);overflow-y:auto;box-sizing:border-box}
 #panel .tip{font-size:11px;color:#8a909c;margin-top:6px;line-height:1.5}
 #cmode.manual{color:#ffb347}
 #rulesbox{position:absolute;top:12px;right:12px;width:210px;background:rgba(20,22,26,.9);border:1px solid #353944;border-radius:6px;padding:10px 12px;font-size:12px;z-index:1;line-height:1.7}
@@ -59,6 +59,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
     <label class="row" title="六类分区色块：城堡、集市、码头、作坊、居住、农业区（8 米一格）"><input id="showzone" type="checkbox"> 显示分区（六类色块）</label>
     <label class="row" title="自动放码头、作坊，并各修一条路过去；关掉就是单中心（v0.11 的结果）"><input id="mc" type="checkbox" checked> 多中心（码头、作坊）</label>
     <label class="row" title="集市小而密、作坊大而疏且朝向带偏转、码头长条地块；关掉就回到 v0.12 的房屋"><input id="mzone" type="checkbox" checked> 房屋按分区取参数</label>
+    <label class="row" title="拖动中心时只重算改动附近：150 米以外的农田沿用上一次结果（D4 局部重生成第一步，下一步扩展到房屋）。关掉即全量重生成"><input id="partial" type="checkbox"> 局部重生成（农田先行）</label>
     <label>城镇规模<select id="town"><option value="s">小</option><option value="m" selected>中</option><option value="l">大</option></select></label>
     <label>城镇生长<select id="tg"><option value="A" selected>A 跟随城堡</option><option value="B">B 单中心</option><option value="C">C 多中心</option></select></label>
     <label>地块大小<select id="size"><option value="256" selected>256 米</option><option value="512">512 米</option><option value="1024">1024 米</option></select></label>
@@ -86,7 +87,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
 // ===== 配置 =====
 const CFG = { N: 129, SIZE: 256, HMAX: 32, RIVER_BED: 4, RIVER_BANK: 18 }; // 网格顶点数 / 地块边长(米) / 最大高度(米) / 河床半宽 / 河岸过渡宽度
 const TOWN = { s: { name: '小', r: 25 }, m: { name: '中', r: 40 }, l: { name: '大', r: 60 } };
-const P = { seed: 20261005, relief: 1, river: true, town: 'm', walls: 2, size: 256, tg: 'A', mc: true, zones: true };  // 生成参数
+const P = { seed: 20261005, relief: 1, river: true, town: 'm', walls: 2, size: 256, tg: 'A', mc: true, zones: true, partial: false };  // 生成参数（partial=D4 局部重生成：拖动只重算附近）
 const O = { castle: null, hubs: {}, painted: {}, lockedRoads: [] };                                        // 人工覆盖：城堡与功能中心的手动位置，重新生成时保留                                                 // 人工覆盖：重新生成时保留，不被自动结果冲掉
 const S = { mode: '2d', heights: null, minH: 0, maxH: 0, errors: [], view2d: null, webgl: false, river: null, autoCastle: null };
 window.addEventListener('error', e => S.errors.push(String(e.message)));
@@ -291,7 +292,7 @@ window.addEventListener('mouseup',()=>{if(zdrag){zdrag=false;buildScene();syncPa
 C2.addEventListener('mousemove',ev=>{
   const v=S.view2d; if(!v) return; const p=screenToWorld(ev), P2=$('probe');
   if(zdrag){paintAt(p);refresh();return;}
-  if(hdrag){O.hubs[hdrag]={x:p.x,z:p.z};clampHub(hdrag);const live=liveDrag();if(!live)S.preview=true;
+  if(hdrag){const old=O.hubs[hdrag]||AUTOHUB(hdrag),moved={x:p.x,z:p.z};if(old&&P.partial!==false)S.reuse={moved:{[hdrag]:{old:{x:old.x,z:old.z},new:moved}}};O.hubs[hdrag]=moved;clampHub(hdrag);const live=liveDrag();if(!live)S.preview=true;
     if(!dragRAF)dragRAF=requestAnimationFrame(()=>{dragRAF=0;if(live)buildScene();syncPanel();refresh();});C2.style.cursor='grabbing';}
   else if(cdrag){O.castle={x:p.x,z:p.z};clampCastle();const live=liveDrag();if(!live)S.preview=true;
     if(!dragRAF)dragRAF=requestAnimationFrame(()=>{dragRAF=0;if(live)buildScene();syncPanel();refresh();});C2.style.cursor='grabbing';}
@@ -368,14 +369,15 @@ function build3D(){
     data.set([x,h,z,n[0],n[1],n[2],col[0]/255,col[1]/255,col[2]/255],o);}
   gl.bindBuffer(gl.ARRAY_BUFFER,vbo); gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
 }
-function sceneCtx(){return {heightAt,riverDist,isWater,SIZE:CFG.SIZE,BED:CFG.RIVER_BED,HMAX:CFG.HMAX,castle:castle(),seed:P.seed,baseAt,townMode:P.tg,multi:P.mc,zones:P.zones!==false,hubOverride:(P.mc&&Object.keys(O.hubs).length)?{...O.hubs}:null,
+const AUTOHUB=t=>{const h=S.scene&&S.scene.hubs&&S.scene.hubs.find(h=>h.type===t);return h?{x:h.x,z:h.z}:null;};
+function sceneCtx(){return {heightAt,riverDist,isWater,SIZE:CFG.SIZE,BED:CFG.RIVER_BED,HMAX:CFG.HMAX,castle:castle(),seed:P.seed,baseAt,townMode:P.tg,multi:P.mc,zones:P.zones!==false,hubOverride:(P.mc&&Object.keys(O.hubs).length)?{...O.hubs}:null,reuse:(P.partial!==false&&S.reuse)?S.reuse:null,
     painted:(P.zones!==false&&Object.keys(O.painted).length)?{...O.painted}:null,lockedRoads:(P.zones!==false&&O.lockedRoads.length)?O.lockedRoads.map(r=>({pts:r.pts,w:r.w,main:!!r.main})):null,riverX:(P.river&&S.river)?riverX:null,
   grid:{N:CFG.N,cell:CFG.SIZE/(CFG.N-1),h:S.heights,base:S.baseHeights,water:S.waterGrid}};}
 function buildScene(){ // 先恢复原始地形，再生成场景（场景会修正地形），最后按硬规则自检
   if(S.baseHeights) S.heights.set(S.baseHeights);
   if(!window.SCENE){if(!S.errors.includes('场景模块没有加载'))S.errors.push('场景模块没有加载');build3D();return;}
   S.buildCount=(S.buildCount||0)+1;
-  const t0=performance.now(),cx=sceneCtx(); S.scene=SCENE.build(cx); const t1=performance.now(); S.audit=SCENE.audit(S.scene,cx); const t2=performance.now();
+  const t0=performance.now(),cx=sceneCtx(); S.reuse=null; S.scene=SCENE.build(cx); const t1=performance.now(); S.audit=SCENE.audit(S.scene,cx); const t2=performance.now();
   const N=CFG.N,c=CFG.SIZE/(N-1);let cut=0,fill=0;for(let k=0;k<N*N;k++){const d=S.heights[k]-S.baseHeights[k];if(d<0)cut-=d;else fill+=d;}
   const cs=S.scene.centers||[],grp=[]; // 城镇建成区：按最近的城镇中心分组，取房屋角点的凸包
   for(const h of S.scene.boxes){if(h.kind!=='house')continue;let bi=0,bd=1e9;cs.forEach((c,i)=>{const dd=Math.hypot(h.x-c.x,h.z-c.z);if(dd<bd){bd=dd;bi=i;}});(grp[bi]=grp[bi]||[]).push(...SCENE.corners(h));}
@@ -531,6 +533,7 @@ $('m2d').onclick=()=>setMode('2d'); $('m3d').onclick=()=>setMode('3d');
 $('relief').addEventListener('input',e=>{$('vRelief').textContent=Number(e.target.value).toFixed(1);});
 $('relief').addEventListener('change',e=>setParams({relief:Number(e.target.value)}));
 $('river').onchange=e=>setParams({river:e.target.checked});
+$('partial').onchange=e=>setParams({partial:e.target.checked});
 $('town').onchange=e=>setParams({town:e.target.value});
 $('walls').onchange=e=>setParams({walls:Number(e.target.value)});
 $('size').onchange=e=>setParams({size:Number(e.target.value)});
@@ -640,7 +643,7 @@ $('plansave').onclick=()=>{try{localStorage.setItem('castle-plan',JSON.stringify
 $('planload').onclick=()=>{let t=null;try{t=localStorage.getItem('castle-plan');}catch(e){}if(!t){flash('本机还没有保存过规划图');return;}let r;try{r=importPlan(JSON.parse(t));}catch(e){r={ok:false,msg:'本机保存的规划图读不出来'};}flash(planMsg(r));};
 
 // 供验证环境调用的接口
-window.sim={zones:()=>{const z=S.scene&&S.scene.zones;if(!z)return null;const {lab,own,...o}=z;return o;},reach,residential,hubs:()=>({hubs:(S.scene&&S.scene.hubs)||[],miss:(S.scene&&S.scene.hubMiss)||[]}),planLabels:()=>PLAN_LABELS.slice(),exportPlan,importPlan,zoneStats:()=>(S.scene&&S.scene.zoneStats)||null,fingerprint:sceneFingerprint,generate,setMode,heightAt,setParams,castle,riverDist,isWater,resetCastle,
+window.sim={zones:()=>{const z=S.scene&&S.scene.zones;if(!z)return null;const {lab,own,...o}=z;return o;},reach,residential,hubs:()=>({hubs:(S.scene&&S.scene.hubs)||[],miss:(S.scene&&S.scene.hubMiss)||[]}),planLabels:()=>PLAN_LABELS.slice(),exportPlan,importPlan,zoneStats:()=>(S.scene&&S.scene.zoneStats)||null,fields:()=>(S.scene&&S.scene.fields)||[],fieldStats:()=>(S.scene&&S.scene.fieldStats)||null,fingerprint:sceneFingerprint,generate,setMode,heightAt,setParams,castle,riverDist,isWater,resetCastle,
   setOverlay3D:b=>{S.overlay3d=!!b;refresh();}, overlayCount:()=>ovCount,
   scene:()=>{const s=S.scene;if(!s)return null;const n=k=>s.boxes.filter(b=>b.kind===k).length;return {houses:n('house'),walls:n('wall'),towers:n('tower'),keep:n('keep'),roads:s.roads.length,bridges:s.roads.filter(r=>r.deck.some(d=>d!==null)).length,people:s.people.length,fields:s.fields.length,gate:s.gate};},
   audit:()=>S.audit, sceneMs:()=>S.sceneMs, earth:()=>S.earth, baseAt,
@@ -653,7 +656,7 @@ window.sim={zones:()=>{const z=S.scene&&S.scene.zones;if(!z)return null;const {l
   setCam:(yaw,pitch,dist,tx,tz)=>{cam.yaw=yaw;cam.pitch=pitch;cam.dist=dist;cam.target=tx==null?[CFG.SIZE/2,6,CFG.SIZE/2]:[tx,heightAt(tx,tz)+2,tz];refresh();},
   params:()=>({...P}),
   setCastle:(x,z)=>{O.castle={x,z};clampCastle();buildScene();syncPanel();refresh();writeHash();},
-  setHub:(t,x,z)=>{if(t!=='码头'&&t!=='作坊')return {ok:false,msg:'中心类型不对（只有码头、作坊能拖）'};O.hubs[t]={x:+x,z:+z};clampHub(t);buildScene();syncPanel();refresh();writeHash();return {ok:true,manual:true};},
+  setHub:(t,x,z)=>{if(t!=='码头'&&t!=='作坊')return {ok:false,msg:'中心类型不对（只有码头、作坊能拖）'};const old=O.hubs[t]||AUTOHUB(t),nx=+x,nz=+z;if(old&&P.partial!==false)S.reuse={moved:{[t]:{old:{x:old.x,z:old.z},new:{x:nx,z:nz}}}};O.hubs[t]={x:nx,z:nz};clampHub(t);buildScene();syncPanel();refresh();writeHash();return {ok:true,manual:true};},
   resetHubs:()=>{O.hubs={};buildScene();syncPanel();refresh();writeHash();return {ok:true};},
   paintCells:cs=>{const ZN=Math.ceil(CFG.SIZE/8);let n=0,skipped=0;const arr=Array.isArray(cs)?cs.map(e=>[+e[0],+e[1]]):Object.entries(cs).map(([i,t])=>[+i,+t]);
     for(const [i,t] of arr){if(!Number.isInteger(i)||i<0||i>=ZN*ZN||!(t>=0&&t<=6)){skipped++;continue;}
