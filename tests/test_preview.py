@@ -298,6 +298,54 @@ with sync_playwright() as p:
     pg.evaluate("sim.resetHubs()")
     bad = pg.evaluate("()=>sim.setHub('教堂',10,10)")
     check("拖不存在的中心被拒绝（只有码头、作坊能拖）", not bad["ok"], json.dumps(bad, ensure_ascii=False))
+
+    # ===== D3 第二步：2D 规划图刷分区（画笔、锁定、重生成保留、水里刷不上）=====
+    pg.evaluate("()=>{sim.setParams({size:512,tg:'A',town:'m',mc:true,zones:true,relief:1,river:true});sim.generate(3)}")
+    lab0 = pg.evaluate("sim.zoneLab()")
+    cells = pg.evaluate("""()=>{const lab=sim.zoneLab(),n=sim.zones().n;
+      for(let j=0;j<n-2;j++)for(let i=0;i<n-2;i++){
+        let ok=true;for(let dj=0;dj<3;dj++)for(let di=0;di<3;di++)if(lab[(j+dj)*n+(i+di)]!==5)ok=false;
+        if(ok){const out=[];for(let dj=0;dj<3;dj++)for(let di=0;di<3;di++)out.push((j+dj)*n+(i+di));return out;}}
+      return [];}""")
+    check("能找到一片连续的居住区格子来刷", len(cells)==9, f"找到 {len(cells)} 格")
+    pr = pg.evaluate("cells=>sim.paintCells(cells.map(c=>[c,4]))", cells)
+    check("画笔刷作坊：9 格全部刷上", pr["painted"]==9 and pr["skipped"]==0, json.dumps(pr))
+    pg.evaluate("sim.generate(3)")
+    lab1 = pg.evaluate("sim.zoneLab()")
+    kept = sum(1 for c in cells if lab1[c]==4)
+    check("刷过的格子锁定：重新生成后还是作坊分区", kept==9, f"9 格中 {kept} 格保住")
+    hin = pg.evaluate("()=>{const z=sim.zones();return z?z.housesIn['作坊']:0}")
+    check("3D 跟着变：刷成的作坊分区里出现了作坊房", hin>=1, f"作坊区房 {hin}")
+    wcell = pg.evaluate("()=>{const n=sim.zones().n;for(let j=0;j<n;j++)for(let i=0;i<n;i++){if(sim.isWater(i*8+4,j*8+4))return j*n+i;}return -1}")
+    if wcell>=0:
+        wr = pg.evaluate(f"w=>sim.paintCells([[w,4]])", wcell)
+        got = pg.evaluate("sim.paintedCells()")
+        check("水里的格子刷不上（跳过并提示）", wr["skipped"]==1 and wr["painted"]==0 and str(wcell) not in got, json.dumps(wr))
+    else:
+        check("水里的格子刷不上（跳过并提示）", False, "没找到水格子")
+    pg.evaluate("sim.clearPainted()")
+    pg.evaluate("sim.generate(3)")
+    lab2 = pg.evaluate("sim.zoneLab()")
+    back = all(lab2[c]==5 for c in cells)
+    check("清除手刷后回到自动分区", back, f"9 格中 {sum(1 for c in cells if lab2[c]==5)} 格回居住")
+    pr2 = pg.evaluate("cells=>sim.paintCells(cells.map(c=>[c,6]))", cells)
+    pl = pg.evaluate("sim.exportPlan()")
+    has = pl["zones"]["painted"]==[[c,6] for c in cells]
+    pg.evaluate("sim.clearPainted()")
+    rr = pg.evaluate("p=>sim.importPlan(p)", pl)
+    got2 = pg.evaluate("sim.paintedCells()")
+    pg.evaluate("sim.generate(3)")
+    lab3 = pg.evaluate("sim.zoneLab()")
+    kept3 = sum(1 for c in cells if lab3[c]==6)
+    check("刷的分区存进规划图，导入后原样恢复并保真", has and rr["ok"] and got2=={str(c):6 for c in cells} and kept3==9,
+          f"导出保留 {has}，导入 {json.dumps(rr, ensure_ascii=False)[:120]}，保住 {kept3}/9")
+    pg.evaluate("()=>{sim.clearPainted();sim.setParams({zones:false});sim.generate(3)}")
+    fpA = pg.evaluate("sim.fingerprint()")
+    pr3 = pg.evaluate("cells=>sim.paintCells(cells.map(c=>[c,4]))", cells)
+    pg.evaluate("sim.generate(3)")
+    fpB = pg.evaluate("sim.fingerprint()")
+    check("关掉分区参数时手刷不影响场景（回到上一版行为）", fpA==fpB and pr3["painted"]==9, f"指纹 {'一致' if fpA==fpB else fpA+'→'+fpB}")
+    pg.evaluate("()=>{sim.clearPainted();sim.setParams({zones:true});sim.generate(3)}")
     pg.evaluate("()=>{sim.setParams({size:256,tg:'A',town:'m',mc:true});sim.generate(20261005)}")
     st = pg.evaluate("sim.state()")
     check("全程无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), "; ".join(l for l in logs if "pageerror" in l)[:200])

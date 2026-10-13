@@ -343,7 +343,8 @@ function build(ctx){
     const zNearHead=(x,z)=>heads.some(q=>Math.hypot(q[0]-x,q[1]-z)<=20);
     const zR=b=>Math.min(b,Math.max(14,Math.round(K.townR*0.55)));const zc=[];if(T)zc.push({t:2,x:T[0],z:T[1],R:zR(40)});S.hubs.forEach(h=>zc.push({t:h.type==='码头'?3:4,x:h.x,z:h.z,R:h.type==='码头'?Math.min(28,Math.round(K.townR*0.4)):zR(40)}));
     const zres=S.centers.map(c=>({x:c.x,z:c.z,R:c.R}));
-    zoneAt=(x,z)=>{const sd=side(x,z),hd=zNearHead(x,z),ok=c=>hd||side(c.x,c.z)===sd;let b=null,bv=1;
+    const pZN=Math.ceil(ctx.SIZE/8),painted0=ctx.painted||null;
+    zoneAt=(x,z)=>{const pk=painted0?painted0[Math.floor(z/8)*pZN+Math.floor(x/8)]:null;if(pk!=null)return pk;const sd=side(x,z),hd=zNearHead(x,z),ok=c=>hd||side(c.x,c.z)===sd;let b=null,bv=1;
       for(const c of zc){if(!ok(c))continue;const v=Math.hypot(x-c.x,z-c.z)/c.R;if(v<bv){bv=v;b=c;}}
       if(b)return b.t;
       let rb=null,rv=1e9,inR=false;for(const c of zres){if(!ok(c))continue;const d=Math.hypot(x-c.x,z-c.z),v=d/(c.R+10);if(d<=c.R)inR=true;if(v<rv){rv=v;rb=c;}}
@@ -500,7 +501,7 @@ function build(ctx){
   lap('统计');S.timing=tm;
   // D2 分区（只算、不改场景）：8 米一格，按“到各中心的加权距离”归属六类分区；河道、陡坡（>25%）是天然边界；分区不跨河（桥头 20 米内除外）
   // 城堡=城墙范围；集市/码头/作坊=各自中心附近（集市 40 米、码头 28 米、作坊 40 米，按距离÷半径取最近）；居住=建成区里其余部分，归最近的同岸居住中心；农业区=建成区外的可建地（面积配套在后面一步做）
-  if(ctx.zones!==false){const ZC=8,ZN=Math.ceil(SIZE/ZC),lab=new Array(ZN*ZN).fill(0),own=new Array(ZN*ZN).fill(-1),NAMES=['不可建','城堡','集市','码头','作坊','居住','农业区'];
+  if(ctx.zones!==false){const ZC=8,ZN=Math.ceil(SIZE/ZC),lab=new Array(ZN*ZN).fill(0),own=new Array(ZN*ZN).fill(-1),NAMES=['不可建','城堡','集市','码头','作坊','居住','农业区'],painted=ctx.painted||null;
     const HG=new Map(),hsZ=S.boxes.filter(o=>o.kind==='house');for(const h of hsZ){const k=Math.floor(h.x/16)+','+Math.floor(h.z/16);let L=HG.get(k);if(!L)HG.set(k,L=[]);L.push(h);}
     const nearH=(x,z)=>{let d=1e9;const gx=Math.floor(x/16),gz=Math.floor(z/16);for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++){const L=HG.get((gx+dx)+','+(gz+dz));if(L)for(const h of L)d=Math.min(d,Math.hypot(h.x-x,h.z-z));}return d;};
     const heads=[];for(const r of S.roads){const p=r.pts;for(let i=0;i<p.length;i++){if(r.deck[i]!==null)continue;if((i>0&&r.deck[i-1]!==null)||(i<p.length-1&&r.deck[i+1]!==null))heads.push(p[i]);}}
@@ -515,6 +516,7 @@ function build(ctx){
     const area=NAMES.map(()=>0);let buildable=0,unzoned=0,cross=0;
     for(let j=0;j<ZN;j++)for(let i=0;i<ZN;i++){const k=j*ZN+i,x=Math.min(SIZE,i*ZC+ZC/2),z=Math.min(SIZE,j*ZC+ZC/2);
       if(riverDist(x,z)<BED){lab[k]=0;continue;}
+      {const pk=painted?painted[k]:null;if(pk!=null){lab[k]=pk;area[pk]+=ZC*ZC;buildable++;continue;}} // D3：用户刷过的格子锁定不变
       if(Math.hypot(x-K.x,z-K.z)<S.rOut){lab[k]=1;}
       else if(slope(x,z)>0.25&&nearH(x,z)>6){lab[k]=0;continue;} // 格子里已经建了房屋的不算陡坡（地基已整平）
       else{const sd=side(x,z),hd=nearHead(x,z),ok=c=>hd||side(c.x,c.z)===sd;let b=null,bv=1;
