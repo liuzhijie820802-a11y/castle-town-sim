@@ -422,6 +422,12 @@ with sync_playwright() as p:
     }""")
     check("局部性：拖动作坊中心后 150 米以外房屋不变比例≥90%", d4r.get("ok") and d4r.get("ratio",0)>=0.9, json.dumps(d4r, ensure_ascii=False))
     print(f"[d4] 512 米拖动到出图耗时 {d4r.get('ms','?')} ms（D4 目标 ≤300 ms，当前为全量重生成的基线）；150 米外房屋 {d4r.get('far','?')} 栋中不变 {d4r.get('kept','?')} 栋")
+    # ===== D4 第二步：分段耗时拆解（只测不改：确认分段计时输出完整，给分块缓存定先后顺序）=====
+    tb = pg.evaluate("()=>{const t=sim.timing()||{};return t.stages||null;}")
+    top3 = sorted(tb.items(), key=lambda kv: -kv[1])[:3] if tb else []
+    oktb = bool(tb) and all(tb.get(k, 0) > 0 for k in ("农田", "房屋落位", "房屋候选"))
+    check("分段计时输出完整（农田、房屋落位、房屋候选三段可读）", oktb, str(top3))
+    print(f"[d4] 512 米分段耗时前三：{top3}（农田+落位+候选占大头，分块缓存先做这三段）")
     check("全程无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), "; ".join(l for l in logs if "pageerror" in l)[:200])
     b.close()
 fails = [r for r in results if not r[1]]
