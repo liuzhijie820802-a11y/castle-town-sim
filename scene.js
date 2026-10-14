@@ -428,27 +428,29 @@ function build(ctx){
   const roadGap=f=>{let m=1e9;for(const q of footprint(f)){const qid=++QID,x=q[0],z=q[1],g0x=Math.floor((x-SNR)/GC),g1x=Math.floor((x+SNR)/GC),g0z=Math.floor((z-SNR)/GC),g1z=Math.floor((z+SNR)/GC);for(let gz=g0z;gz<=g1z;gz++)for(let gx=g0x;gx<=g1x;gx++){const a=SEGI.get(gx*4096+(gz+2048));if(a)for(let i=0;i<a.length;i++){const sg=a[i];if(sg.q===qid)continue;sg.q=qid;const e=segDist(x,z,sg.ax,sg.az,sg.bx,sg.bz)-sg.r.w/2;if(e<m)m=e;}}}return m;};
   const tryField=(x,z,yaw,vmax)=>{const fd=bandFd(x,z);if(fd===null)return;
     const f={kind:'field',x,z,w:10,d:15,yaw};
+    if(S.fields.length&&S.fields.some(o=>overlapRect(o,f,1)))return; // 复用补扫时跳过和已放农田（含沿用块）重叠的候选，省一次白算
     if(corners(f).some(c=>!inMap(c[0],c[1],1))||wet(f,2))return;const v=gmax(f)-gmin(f);if(v>vmax)return;
     const mr=roadGap(f);if(mr<1||mr>40)return; // 田接路网：田边离最近的路要在 1~40 米之间，压路和离路太远都不要
     fc.push({f,mr,score:-v-0.01*Math.abs(fd-20)-0.04*mr+rnd()*0.2});};
   const RU=(ctx.reuse&&ctx.reuse.moved)?ctx.reuse:null; // D4 第一步：小拖动后改动附近的农田重新生成，150 米外的沿用上次结果
   const chPts=RU?Object.values(RU.moved).flatMap(m=>m.old&&m.new?[m.old,m.new]:[]):null;
   const nearChg=(x,z,R2)=>chPts.some(c=>{const dx=x-c.x,dz=z-c.z;return dx*dx+dz*dz<R2;});
-  const genCands=skipFar=>{
-    for(let z=10;z<=SIZE-10;z+=10)for(let x=10;x<=SIZE-10;x+=10){if(skipFar&&nearChg(x,z,RU_GEN*RU_GEN))continue;const [gx,gz]=grad(x,z);tryField(x,z,Math.atan2(gz,gx),4);}
+  const genCands=md=>{ // 0=全量 1=只算改动附近（复用时第一遍） 2=只算改动远处（近处不够时补扫）
+    const sk=(x,z)=>md===1?!nearChg(x,z,RU_GEN*RU_GEN):(md===2?nearChg(x,z,RU_GEN*RU_GEN):false);
+    for(let z=10;z<=SIZE-10;z+=10)for(let x=10;x<=SIZE-10;x+=10){if(sk(x,z))continue;const [gx,gz]=grad(x,z);tryField(x,z,Math.atan2(gz,gx),4);}
     for(const r of S.roads){const p=r.pts,hw=r.w/2;let need=10;
       for(let i=1;i<p.length;i++){let sx=p[i-1][0],sz=p[i-1][1];const dx=p[i][0]-sx,dz=p[i][1]-sz,L=Math.hypot(dx,dz);if(L<1e-6)continue;
         const ux=dx/L,uz=dz/L,nx=-uz,nz=ux;
         while(need<=L){const t=need/L,x=sx+dx*t,z=sz+dz*t;
-          if(!skipFar||nearChg(x,z,RU_GEN*RU_GEN))for(const side of [-1,1])for(const off of [hw+6,hw+17,hw+28,hw+39])tryField(x+nx*side*off,z+nz*side*off,Math.atan2(uz,ux),5.5);
+          if(!sk(x,z))for(const side of [-1,1])for(const off of [hw+6,hw+17,hw+28,hw+39])tryField(x+nx*side*off,z+nz*side*off,Math.atan2(uz,ux),5.5);
           need+=16;}
         need-=L;}}};
-  genCands(!!RU);
+  genCands(RU?1:0);
   fc.sort((a,b)=>b.score-a.score);
   const fieldCap=Math.round(Math.PI*((K.townR+70)**2-(0.85*K.townR)**2)/1280);
   const housesN=S.boxes.filter(o=>o.kind==='house').length;
   const fieldTarget=Math.min(fieldCap,Math.max(4,Math.round(housesN/8))); // D2 第四步：农田面积按房屋数算（约 8 栋房一块田），不再按环带面积封顶
-  let roadFar=0,reused=0;
+  let roadFar=0,reused=0,refill=false;
   const placeAll=()=>{for(const c of fc){if(S.fields.length>=fieldTarget)break;const f=c.f;
     if(footprint(f).some(q=>nearRoad(q[0],q[1],1)))continue;
     if(S.fields.some(o=>overlapRect(o,f,1))||hitsBox(f,1))continue;
@@ -460,13 +462,13 @@ function build(ctx){
     for(const lf of ru){roadFar=Math.max(roadFar,roadGap(lf));lf.col=S.fields.length%2?'field1':'field2';S.fields.push(lf);reused++;}
   }
   placeAll();
-  if(RU&&LFIELDS&&S.fields.length<fieldTarget){fc.length=0;genCands(false);placeAll();} // 紧凑城镇：近处候选不够凑满目标数，补全量候选再放
+  if(RU&&LFIELDS&&S.fields.length<fieldTarget){refill=true;fc.length=0;genCands(2);placeAll();} // 紧凑城镇：近处候选不够凑满目标数，补全量候选再放
   for(const c of fc){if(S.fields.length>=fieldTarget)break;const f=c.f;
     if(footprint(f).some(q=>nearRoad(q[0],q[1],1)))continue;
     if(S.fields.some(o=>overlapRect(o,f,1))||hitsBox(f,1))continue;
     roadFar=Math.max(roadFar,c.mr);
     f.col=S.fields.length%2?'field1':'field2';S.fields.push(f);}
-  S.fieldStats={n:S.fields.length,target:fieldTarget,roadFar:Math.round(roadFar*10)/10,houses:housesN,reused};
+  S.fieldStats={n:S.fields.length,target:fieldTarget,roadFar:Math.round(roadFar*10)/10,houses:housesN,reused,refill};
   LFIELDS=S.fields.map(f=>({x:f.x,z:f.z,yaw:f.yaw,w:f.w,d:f.d}));
 
   lap('农田');

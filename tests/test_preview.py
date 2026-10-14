@@ -461,6 +461,14 @@ with sync_playwright() as p:
     pg.evaluate("()=>{sim.setParams({partial:true});sim.resetHubs();sim.generate(3);const a=sim.hubs().hubs.find(h=>h.type==='作坊');sim.setHub('作坊',a.x+40,a.z)}")
     pg.evaluate("()=>{sim.setParams({partial:false});sim.resetHubs();sim.generate(3);const a=sim.hubs().hubs.find(h=>h.type==='作坊');sim.setHub('作坊',a.x+40,a.z)}")
     check("关掉局部重生成后回到全量重生成（指纹与从未开启时一致）", pg.evaluate("sim.fingerprint()")==fpA)
+    # ===== D4 第五步：复用只扫一遍（近处够用不补全量；补扫只算远处候选，紧凑场景不再变慢）=====
+    rf = pg.evaluate("""()=>{const out=[];for(const sd of [2,5]){
+      sim.setParams({size:512,tg:'A',town:'m',mc:true,zones:true,relief:1,river:true,partial:true});sim.resetHubs();sim.generate(sd);
+      const a=sim.hubs().hubs.find(h=>h.type==='作坊');sim.setHub('作坊',a.x+40,a.z);
+      const fs=sim.fieldStats();out.push({sd,refill:fs.refill,reused:fs.reused,n:fs.n,tgt:fs.target,t:sim.timing().build});}return out}""")
+    check("复用只扫一遍：近处候选够用就不做全量补扫，农田数仍够", all((r["refill"] is False) and r["n"]>=r["tgt"] and r["reused"]>0 for r in rf), json.dumps(rf))
+    print("[d4] 复用只扫一遍实测（毫秒）：" + "; ".join(f"s{r['sd']}: {r['t']:.0f} 补扫={r['refill']} 复用{r['reused']}/{r['n']}/{r['tgt']}" for r in rf))
+    pg.evaluate("()=>{sim.setParams({partial:false});sim.resetHubs();sim.generate(3);}")
     check("全程无报错", not st["errors"] and not any(l.startswith("pageerror") for l in logs), "; ".join(l for l in logs if "pageerror" in l)[:200])
     b.close()
 fails = [r for r in results if not r[1]]
