@@ -328,16 +328,18 @@ function build(ctx){
       const np=[head].concat(p.slice(h)),bak=r.pts;r.pts=end?np.reverse():np;if(comps()>nc){r.pts=bak;continue;}r.deck=r.pts.map(()=>null);if(!end)r.acc0=((h-1)*2)%RULES.soft.houseSpacing;const gh=p.slice(0,h+1);(r.ghost=r.ghost||[]).push(end?gh.reverse():gh);anch.push(head);idx();}}
   }
   // 路基：纵断面平滑并限坡，再整平路面、两侧放坡；桥段按两岸高度架设
-  for(const r of S.roads){const p=r.pts,n=p.length,g=p.map(q=>heightAt(q[0],q[1])),wt=p.map(q=>riverDist(q[0],q[1])<BED+1.5);
+  const RPTS=S.roads.map(r=>r.pts),RWID=S.roads.map(r=>r.w);
+  S.roads.forEach((r,ri)=>{const p=r.pts,n=p.length,g=p.map(q=>heightAt(q[0],q[1])),wt=p.map(q=>riverDist(q[0],q[1])<BED+1.5);
     for(let i=0;i<n;i++)if(wt[i]){let j=i;while(j+1<n&&wt[j+1])j++;const a=i>0?g[i-1]:(j+1<n?g[j+1]:0),b=j+1<n?g[j+1]:a;for(let k=i;k<=j;k++)g[k]=a+(b-a)*(k-i+1)/(j-i+2);i=j;}
     let s=g.slice();for(let it=0;it<3;it++){const t=s.slice();for(let i=1;i<n-1;i++)t[i]=(s[i-1]+s[i]*2+s[i+1])/4;s=t;}
-    const fix=p.map(q=>ed.locked(q[0],q[1])),fy=p.map(q=>heightAt(q[0],q[1])); // 与已建道路相交处：高度跟已有路面接上
+    // 与已建道路相交处：高度跟已有路面接上。扩展钉住范围：落在先建路整平带内（中心线距离<半宽+1）的点也钉，让后建路穿过先建路时整段贴着已有路面走，避免整平带边缘的跳变；水面段不钉
+    const fix=p.map((q,i)=>ed.locked(q[0],q[1])||(!wt[i]&&RPTS.some((rp,rj)=>rj<ri&&rp.some(w=>Math.hypot(w[0]-q[0],w[1]-q[1])<RWID[rj]/2)))),fy=p.map(q=>heightAt(q[0],q[1]));
     // 限坡按段长算坡度：路口 snapping 会产生几厘米的短段，固定高差 0.24 在短段上会变成百分之几十的坡度
     const mg=[];for(let i=0;i<n-1;i++)mg[i]=RULES.soft.maxGrade*Math.max(Math.hypot(p[i+1][0]-p[i][0],p[i+1][1]-p[i][1]),0);
     for(let it=0;it<4;it++){for(let i=0;i<n;i++)if(fix[i])s[i]=fy[i];
       for(let i=1;i<n;i++)if(!fix[i])s[i]=clamp(s[i],s[i-1]-mg[i-1],s[i-1]+mg[i-1]);for(let i=n-2;i>=0;i--)if(!fix[i])s[i]=clamp(s[i],s[i+1]-mg[i],s[i+1]+mg[i]);}
     for(let i=0;i<n;i++)r.deck[i]=wt[i]?s[i]+0.3:null;
-    ed.road(r,s,r.w/2+0.8,3);}
+    ed.road(r,s,r.w/2+0.8,3);});
   lap('路基');
 
   // 5. 广场、水井、摊位（广场整平）

@@ -116,6 +116,24 @@ with sync_playwright() as p:
     # ===== B 阶段遗留：路口坡度突变（限坡按段长算坡度后，短段不再出现尖峰）=====
     sbad = pg.evaluate("""()=>{const b=[];for(const sd of [3,7,20261005]){sim.generate(sd);const segs=sim.gradeSegs()||[];const hit=segs.filter(s=>s.L<1.9&&s.g>0.15);if(hit.length)b.push('seed'+sd+':'+hit.length+'段(最陡'+Math.round(Math.max(...hit.map(h=>h.g))*100)+'%,段长'+Math.min(...hit.map(h=>h.L)).toFixed(2)+'米)');}sim.generate(20261005);return b}""")
     check("限坡按段长算：不足 2 米的短段不再出现坡度尖峰（12% 限坡加整平容差，不超过 15%）", not sbad, "; ".join(sbad)[:300])
+    # ===== 路口衔接（r23）：后建路穿过先建路整平带时整段贴合已有路面 =====
+    ins = pg.evaluate("""()=>{sim.setParams({size:512,town:'m',tg:'A',relief:1});const o=[];
+    for(const sd of [3,7,20261005]){sim.generate(sd);const R=S.scene.roads;let mx=0;
+      for(let ri=0;ri<R.length;ri++){const p=R[ri].pts;
+        for(let i=0;i<p.length-1;i++){const a=p[i],c=p[i+1];let inside=false;
+          for(let rj=0;rj<ri&&!inside;rj++){const q=R[rj].pts,hw=R[rj].w/2;
+            for(const w of q){if(Math.hypot(w[0]-a[0],w[1]-a[1])<hw&&Math.hypot(w[0]-c[0],w[1]-c[1])<hw){inside=true;break;}}}
+          if(!inside)continue;
+          const L=Math.hypot(c[0]-a[0],c[1]-a[1])||1,g=Math.abs(sim.heightAt(c[0],c[1])-sim.heightAt(a[0],a[1]))/L;
+          if(g>mx)mx=g;}}
+      o.push('seed'+sd+':'+Math.round(mx*100)+'%');}
+    sim.setParams({walls:2,town:'m',river:true,relief:1,size:256});sim.generate(20261005);return o}""")
+    check("路口衔接：后建路在先建路整平带内的路段坡度不超过 15%", not any(float(x.split(':')[1][:-1])>15 for x in ins), "; ".join(ins))
+    jf = pg.evaluate("""()=>{sim.setParams({size:512,town:'m',tg:'A',relief:1});const o=[];
+    for(const sd of [3,7,20261005]){sim.generate(sd);const segs=sim.gradeSegs()||[];const bad=segs.filter(s=>s.g>0.14);
+      o.push('seed'+sd+':'+Math.round(bad.length/segs.length*1000)/10+'%');}
+    sim.setParams({walls:2,town:'m',river:true,relief:1,size:256});sim.generate(20261005);return o}""")
+    check("路口坡度残留：512 尺度三个种子坡度超 14% 的路段占比不超过 4.2%", not any(float(x.split(':')[1][:-1])>4.2 for x in jf), "; ".join(jf))
     hc = pg.evaluate("""()=>{const o=[];for(let s=1;s<=20;s++){sim.generate(s);o.push(sim.scene().houses);}sim.generate(20261005);return o}""")
     h0 = pg.evaluate("sim.scene().houses")
     check("房屋数量够（默认种子至少 35 栋，20 个种子每个至少 20 栋）", h0 >= 35 and min(hc) >= 20, f"默认 {h0} 栋；20 个种子 最少 {min(hc)} · 平均 {sum(hc)/len(hc):.0f} 栋")
@@ -433,9 +451,9 @@ with sync_playwright() as p:
     print(f"[d4] 512 米分段耗时前三：{top3}（农田+落位+候选占大头，分块缓存先做这三段）")
     # ===== D4 第二步：路段空间索引加速（只提速不改输出：指纹与基线一致；基线在 r22 限坡按段长改动后更新）=====
     fps = {}
-    for tgv, want in (("A", "e9fb6d9c"), ("B", "ec1ac907"), ("C", "ec1ac907")):
+    for tgv, want in (("A", "fed7a0de"), ("B", "ec1ac907"), ("C", "ec1ac907")):
         fps[tgv] = pg.evaluate("(tg)=>{sim.setParams({size:512,town:'m',tg:tg,relief:1,mc:true,zones:true,river:true});sim.generate(3);return sim.fingerprint();}", tgv)
-    check("场景输出稳定（512A/512B/512C 指纹与 r22 限坡改动后的基线一致）", fps == {"A": "e9fb6d9c", "B": "ec1ac907", "C": "ec1ac907"}, json.dumps(fps))
+    check("场景输出稳定（512A/512B/512C 指纹与 r22 限坡改动后的基线一致）", fps == {"A": "fed7a0de", "B": "ec1ac907", "C": "ec1ac907"}, json.dumps(fps))
     print(f"[d4] 空间索引后指纹：{fps}")
     # ===== D4 分块缓存第一小步：农田复用（拖动只重算附近，远处农田沿用；开关默认关）=====
     pd = pg.evaluate("sim.params().partial")
