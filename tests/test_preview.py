@@ -134,6 +134,18 @@ with sync_playwright() as p:
       o.push('seed'+sd+':'+Math.round(bad.length/segs.length*1000)/10+'%');}
     sim.setParams({walls:2,town:'m',river:true,relief:1,size:256});sim.generate(20261005);return o}""")
     check("路口坡度残留：512 尺度三个种子坡度超 14% 的路段占比不超过 4.2%", not any(float(x.split(':')[1][:-1])>4.2 for x in jf), "; ".join(jf))
+    # r27：贴岸浅水面（点不在湿测带内但四周格是水面）必须架桥面高度，路面不得塌进河床
+    cw = pg.evaluate("""()=>{sim.setParams({size:512,town:'m',tg:'A',relief:1});const o=[];
+    for(const sd of [3,7,20261005]){sim.generate(sd);const sc=S.scene,N=CFG.N,c=CFG.SIZE/(N-1),W=S.waterGrid;
+      for(const r of sc.roads){const p=r.pts,n=p.length;
+        const isW=i=>{const ii=Math.floor(p[i][0]/c),jj=Math.floor(p[i][1]/c);return !!W[jj*N+ii];};
+        const wt=p.map(q=>sim.riverDist(q[0],q[1])<CFG.RIVER_BED+1.5);
+        for(let it=0;it<n;it++){let ch=false;
+          for(let i=0;i<n;i++)if(!wt[i]&&isW(i)&&((i>0&&wt[i-1])||(i<n-1&&wt[i+1]))){wt[i]=true;ch=true;}
+          if(!ch)break;}
+        for(let i=0;i<n;i++)if(wt[i]&&r.deck[i]===null)o.push('seed'+sd+':路'+sc.roads.indexOf(r)+'点'+i);}}
+    sim.setParams({walls:2,town:'m',river:true,relief:1,size:256});sim.generate(20261005);return o}""")
+    check("连着湿带的水面格路段都有桥面高度覆盖（3 个种子）", not cw, "; ".join(cw[:5]))
     hc = pg.evaluate("""()=>{const o=[];for(let s=1;s<=20;s++){sim.generate(s);o.push(sim.scene().houses);}sim.generate(20261005);return o}""")
     h0 = pg.evaluate("sim.scene().houses")
     check("房屋数量够（默认种子至少 35 栋，20 个种子每个至少 20 栋）", h0 >= 35 and min(hc) >= 20, f"默认 {h0} 栋；20 个种子 最少 {min(hc)} · 平均 {sum(hc)/len(hc):.0f} 栋")

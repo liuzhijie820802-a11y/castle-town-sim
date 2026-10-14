@@ -80,6 +80,7 @@ function makeEditor(G){const N=G.N,c=G.cell,h=G.h,lock=new Uint8Array(N*N);
     settle(b,y,m){const co=Math.cos(b.yaw),si=Math.sin(b.yaw),R=Math.hypot(b.w/2+m,b.d/2+m);const [i0,i1,j0,j1]=box(b.x-R,b.z-R,b.x+R,b.z+R,0); // r9：房屋全部落位后，把占地外扩一格内（双线性插值会用到的格点）整平到地基高度；只动还没被锁定的格点（道路、河道、任何房屋地基都不动）
       for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){const k=j*N+i;if(lock[k]||G.water[k])continue;const dx=i*c-b.x,dz=j*c-b.z,e=Math.max(Math.abs(dx*co+dz*si)-b.w/2,Math.abs(-dx*si+dz*co)-b.d/2);if(e>m)continue;h[k]=y;lock[k]=3;}},
     cell:c,
+    waterAt(x,z){const i=Math.floor(x/c),j=Math.floor(z/c);return !!G.water[Math.min(N-1,j)*N+Math.min(N-1,i)];}, // r27：点所在格是水面（湿测带和水面格在河岸斜边上有半格错位）
     locked(x,z){const i=Math.floor(x/c),j=Math.floor(z/c);for(const [a,b] of [[0,0],[1,0],[0,1],[1,1]]){const ii=Math.min(N-1,i+a),jj=Math.min(N-1,j+b);if(!lock[jj*N+ii])return false;}return true;}
   };}
 
@@ -307,7 +308,7 @@ function build(ctx){
   }
   lap('路网');
   // 线形平滑：去掉逐步转向留下的折线（两端不动）
-  for(const r of S.roads){if(r.locked)continue;const p=r.pts,wt=p.map(q=>riverDist(q[0],q[1])<BED+1.5);for(let it=0;it<3;it++){const q=p.map(v=>v.slice());for(let i=1;i<p.length-1;i++){q[i][0]=(p[i-1][0]+p[i][0]*2+p[i+1][0])/4;q[i][1]=(p[i-1][1]+p[i][1]*2+p[i+1][1])/4;}for(let i=1;i<p.length-1;i++)if(!wt[i]){p[i][0]=q[i][0];p[i][1]=q[i][1];}}} // 桥段（河道内的点）不参与平滑，保持直线
+  for(const r of S.roads){if(r.locked)continue;const p=r.pts,wt=(()=>{const w=p.map(q=>riverDist(q[0],q[1])<BED+1.5);for(let it=0;it<p.length;it++){let ch=false;for(let i=0;i<p.length;i++)if(!w[i]&&ed.waterAt(p[i][0],p[i][1])&&((i>0&&w[i-1])||(i<p.length-1&&w[i+1]))){w[i]=true;ch=true;}if(!ch)break;}return w;})();for(let it=0;it<3;it++){const q=p.map(v=>v.slice());for(let i=1;i<p.length-1;i++){q[i][0]=(p[i-1][0]+p[i][0]*2+p[i+1][0])/4;q[i][1]=(p[i-1][1]+p[i][1]*2+p[i+1][1])/4;}for(let i=1;i<p.length-1;i++)if(!wt[i]){p[i][0]=q[i][0];p[i][1]=q[i][1];}}} // 桥段（河道内的点）不参与平滑，保持直线
   { // r8：一条路（主路除外）的开头或结尾一段贴着别的路平行走（约 6~7 米内、夹角<23°）时，把这段剪掉，从两路分开的地方用一小段直接接到那条路上
     const PG=new Map(),pang=(p,i)=>{const a=p[Math.max(0,i-1)],b=p[Math.min(p.length-1,i+1)];return Math.atan2(b[1]-a[1],b[0]-a[0]);};
     const idx=()=>{PG.clear();S.roads.forEach((r,k)=>{const p=r.pts;for(let i=0;i<p.length;i++){const key=Math.floor(p[i][0]/8)+','+Math.floor(p[i][1]/8);let L=PG.get(key);if(!L)PG.set(key,L=[]);L.push({k,x:p[i][0],z:p[i][1],ang:pang(p,i),w:r.w});}});};
@@ -329,7 +330,7 @@ function build(ctx){
   }
   // 路基：纵断面平滑并限坡，再整平路面、两侧放坡；桥段按两岸高度架设
   const RPTS=S.roads.map(r=>r.pts),RWID=S.roads.map(r=>r.w);
-  S.roads.forEach((r,ri)=>{const p=r.pts,n=p.length,g=p.map(q=>heightAt(q[0],q[1])),wt=p.map(q=>riverDist(q[0],q[1])<BED+1.5);
+  S.roads.forEach((r,ri)=>{const p=r.pts,n=p.length,g=p.map(q=>heightAt(q[0],q[1])),wt=(()=>{const w=p.map(q=>riverDist(q[0],q[1])<BED+1.5);for(let it=0;it<p.length;it++){let ch=false;for(let i=0;i<p.length;i++)if(!w[i]&&ed.waterAt(p[i][0],p[i][1])&&((i>0&&w[i-1])||(i<p.length-1&&w[i+1]))){w[i]=true;ch=true;}if(!ch)break;}return w;})(); // r27：贴岸浅水面（点不在湿测带内但四周格是水面）也算水上段，架桥面高度，避免路面塌进河床
     for(let i=0;i<n;i++)if(wt[i]){let j=i;while(j+1<n&&wt[j+1])j++;const a=i>0?g[i-1]:(j+1<n?g[j+1]:0),b=j+1<n?g[j+1]:a;for(let k=i;k<=j;k++)g[k]=a+(b-a)*(k-i+1)/(j-i+2);i=j;}
     let s=g.slice();for(let it=0;it<3;it++){const t=s.slice();for(let i=1;i<n-1;i++)t[i]=(s[i-1]+s[i]*2+s[i+1])/4;s=t;}
     // 与已建道路相交处：高度跟已有路面接上。扩展钉住范围：落在先建路整平带内（中心线距离<半宽+1）的点也钉，让后建路穿过先建路时整段贴着已有路面走，避免整平带边缘的跳变；水面段不钉
@@ -517,8 +518,10 @@ function build(ctx){
   const Q={cnt:{Q1:0,Q2:0,Q3:0,Q4:0,Q5:0},items:[]},qa=(id,x,z,msg)=>{Q.cnt[id]++;if(Q.items.length<300)Q.items.push({id,x,z,msg});};
   const brs=[];
   for(const r of S.roads){const p=r.pts,n=p.length;for(let i=0;i<n;i++)if(r.deck[i]!==null){let j=i;while(j+1<n&&r.deck[j+1]!==null)j++;
-    const a=p[Math.max(0,i-1)],b=p[Math.min(n-1,j+1)],m=p[(i+j)>>1],dry=q=>riverDist(q[0],q[1])>=BED;let bad='';
-    if(!(i>0&&j<n-1))bad='桥头没落地';else if(!dry(a)||!dry(b))bad='桥头落在水里';
+    const core=[];for(let k=i;k<=j;k++)if(riverDist(p[k][0],p[k][1])<BED+1.5)core.push(k);
+    if(!core.length){i=j;continue;} // r27：贴岸浅水面的小段不是桥，不进桥的质检
+    const ci=core[0],cj=core[core.length-1],a=p[Math.max(0,ci-1)],b=p[Math.min(n-1,cj+1)],m=p[(ci+cj)>>1],dry=q=>riverDist(q[0],q[1])>=BED;let bad='';
+    if(!(ci>0&&cj<n-1))bad='桥头没落地';else if(!dry(a)||!dry(b))bad='桥头落在水里';
     else if(riverX&&Math.sign(a[0]-riverX(a[1]))===Math.sign(b[0]-riverX(b[1])))bad='桥没跨过河（顺着河走）';
     else if(riverX){const dx=b[0]-a[0],dz=b[1]-a[1],L=Math.hypot(dx,dz)||1,tx=(riverX(m[1]+1)-riverX(m[1]-1))/2,tl=Math.hypot(tx,1);if(Math.abs((dx*tx+dz)/(L*tl))>0.71)bad='桥太斜（与河道夹角小于 45°）';}
     if(bad)qa('Q1',m[0],m[1],bad);brs.push(m);i=j;}}
