@@ -649,7 +649,7 @@ window.sim={zones:()=>{const z=S.scene&&S.scene.zones;if(!z)return null;const {l
   audit:()=>S.audit, sceneMs:()=>S.sceneMs, earth:()=>S.earth, baseAt,
   timing:()=>S.timing, buildCount:()=>S.buildCount||0, preview:()=>!!S.preview, conn:()=>S.scene&&S.scene.conn, hulls:()=>S.hulls, stats:()=>({size:CFG.SIZE,terrainVerts:CFG.N*CFG.N,objTris:objCount/3}),
   soft:()=>({...SCENE.RULES.soft}), setSoft:o=>{Object.assign(SCENE.RULES.soft,o);buildScene();refresh();},
-  grade:()=>S.scene&&S.scene.grade, ringStd:()=>S.scene?S.scene.ringStd:null,
+  grade:()=>S.scene&&S.scene.grade,gradeSegs:()=>(S.scene&&S.scene.gradeSegs)||null, ringStd:()=>S.scene?S.scene.ringStd:null,
   flat:()=>S.scene.boxes.filter(b=>b.kind==='house').map(b=>{const f=SCENE.footprint(b).map(p=>heightAt(p[0],p[1]));return Math.max(...f)-Math.min(...f);}),
   flatBase:()=>S.scene.boxes.filter(b=>b.kind==='house').map(b=>{const f=SCENE.footprint(b).map(p=>baseAt(p[0],p[1]));return Math.max(...f)-Math.min(...f);}),
   setShowEarth:b=>{S.showEarth=!!b;$('earth').textContent=S.showEarth?'隐藏挖填方':'显示挖填方';build3D();refresh();}, townCenter:()=>S.scene&&S.scene.T,

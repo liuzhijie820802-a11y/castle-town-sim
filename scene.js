@@ -332,9 +332,10 @@ function build(ctx){
     for(let i=0;i<n;i++)if(wt[i]){let j=i;while(j+1<n&&wt[j+1])j++;const a=i>0?g[i-1]:(j+1<n?g[j+1]:0),b=j+1<n?g[j+1]:a;for(let k=i;k<=j;k++)g[k]=a+(b-a)*(k-i+1)/(j-i+2);i=j;}
     let s=g.slice();for(let it=0;it<3;it++){const t=s.slice();for(let i=1;i<n-1;i++)t[i]=(s[i-1]+s[i]*2+s[i+1])/4;s=t;}
     const fix=p.map(q=>ed.locked(q[0],q[1])),fy=p.map(q=>heightAt(q[0],q[1])); // 与已建道路相交处：高度跟已有路面接上
-    const m=RULES.soft.maxGrade*2;
+    // 限坡按段长算坡度：路口 snapping 会产生几厘米的短段，固定高差 0.24 在短段上会变成百分之几十的坡度
+    const mg=[];for(let i=0;i<n-1;i++)mg[i]=RULES.soft.maxGrade*Math.max(Math.hypot(p[i+1][0]-p[i][0],p[i+1][1]-p[i][1]),0);
     for(let it=0;it<4;it++){for(let i=0;i<n;i++)if(fix[i])s[i]=fy[i];
-      for(let i=1;i<n;i++)if(!fix[i])s[i]=clamp(s[i],s[i-1]-m,s[i-1]+m);for(let i=n-2;i>=0;i--)if(!fix[i])s[i]=clamp(s[i],s[i+1]-m,s[i+1]+m);}
+      for(let i=1;i<n;i++)if(!fix[i])s[i]=clamp(s[i],s[i-1]-mg[i-1],s[i-1]+mg[i-1]);for(let i=n-2;i>=0;i--)if(!fix[i])s[i]=clamp(s[i],s[i+1]-mg[i],s[i+1]+mg[i]);}
     for(let i=0;i<n;i++)r.deck[i]=wt[i]?s[i]+0.3:null;
     ed.road(r,s,r.w/2+0.8,3);}
   lap('路基');
@@ -490,11 +491,16 @@ function build(ctx){
   lap('角色');
   // 10. 统计：路面坡度、环城路高差
   let gm=0,gs=0,gn=0,gok=0,bs=0;const rs=[];
+  // 诊断：路口点集合（某路的点落在另一条路 5 米内），每段路标出是否挨着路口
+  const jpts=[];for(let a=0;a<S.roads.length;a++)for(const q of S.roads[a].pts){for(let b2=0;b2<S.roads.length;b2++){if(b2===a)continue;let m=1e9;for(const w of S.roads[b2].pts){const d=Math.hypot(w[0]-q[0],w[1]-q[1]);if(d<m)m=d;}if(m<5){jpts.push(q);break;}}}
+  const gsegs=[];
   for(const r of S.roads){for(let i=0;i<r.pts.length-1;i++){const a=r.pts[i],b=r.pts[i+1],ya=roadSurface(r,ctx,a[0],a[1]),yb=roadSurface(r,ctx,b[0],b[1]);
       if(ya===null||yb===null)continue;const L=Math.hypot(b[0]-a[0],b[1]-a[1])||1,g=Math.abs(yb-ya)/L;gm=Math.max(gm,g);gs+=g;gn++;if(g<=RULES.soft.maxGrade+0.01)gok++;
-      if(ctx.baseAt)bs+=Math.abs(ctx.baseAt(b[0],b[1])-ctx.baseAt(a[0],a[1]))/L;}
+      if(ctx.baseAt)bs+=Math.abs(ctx.baseAt(b[0],b[1])-ctx.baseAt(a[0],a[1]))/L;
+      const mx=(a[0]+b[0])/2,mz=(a[1]+b[1])/2;let jn=false;for(const q of jpts){if(Math.hypot(q[0]-mx,q[1]-mz)<4){jn=true;break;}}
+      gsegs.push({g:Math.round(g*1000)/1000,L:Math.round(L*100)/100,j:jn});}
     if(r.ring)for(const q of r.pts)rs.push(heightAt(q[0],q[1]));}
-  S.grade={max:gm,mean:gn?gs/gn:0,okFrac:gn?gok/gn:1,baseMean:gn?bs/gn:0};
+  S.grade={max:gm,mean:gn?gs/gn:0,okFrac:gn?gok/gn:1,baseMean:gn?bs/gn:0};S.gradeSegs=gsegs;
   if(rs.length){const m=rs.reduce((a,b)=>a+b,0)/rs.length;S.ringStd=Math.sqrt(rs.reduce((a,b)=>a+(b-m)*(b-m),0)/rs.length);}else S.ringStd=null;
   // 连通：道路之间按距离并成网络，统计连不到城门路网的房屋（对比 A/B/C 用，暂不作为硬规则）
   const par=S.roads.map((_,i)=>i),fdr=i=>par[i]===i?i:(par[i]=fdr(par[i])),cell=new Map();

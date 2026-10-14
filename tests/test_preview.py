@@ -113,6 +113,9 @@ with sync_playwright() as p:
     check("环城路沿等高线走（高差标准差小于 1.5 米）", rs is not None and rs < 1.5, str(rs))
     bad3 = pg.evaluate("""()=>{const b=[];for(let s=1;s<=20;s++){sim.generate(s);const e=sim.earth(),g=sim.grade();if(!(e.cut>20&&e.fill>20)||g.okFrac<0.75||g.mean>=g.baseMean)b.push(s+':'+Math.round(e.cut)+'/'+Math.round(e.fill)+'/'+(g.okFrac*100).toFixed(0)+'%/'+(g.baseMean*100).toFixed(0)+'→'+(g.mean*100).toFixed(0));}sim.generate(20261005);return b}""")
     check("20 个种子都有地形修正、路面都变缓", not bad3, "; ".join(bad3)[:300])
+    # ===== B 阶段遗留：路口坡度突变（限坡按段长算坡度后，短段不再出现尖峰）=====
+    sbad = pg.evaluate("""()=>{const b=[];for(const sd of [3,7,20261005]){sim.generate(sd);const segs=sim.gradeSegs()||[];const hit=segs.filter(s=>s.L<1.9&&s.g>0.15);if(hit.length)b.push('seed'+sd+':'+hit.length+'段(最陡'+Math.round(Math.max(...hit.map(h=>h.g))*100)+'%,段长'+Math.min(...hit.map(h=>h.L)).toFixed(2)+'米)');}sim.generate(20261005);return b}""")
+    check("限坡按段长算：不足 2 米的短段不再出现坡度尖峰（12% 限坡加整平容差，不超过 15%）", not sbad, "; ".join(sbad)[:300])
     hc = pg.evaluate("""()=>{const o=[];for(let s=1;s<=20;s++){sim.generate(s);o.push(sim.scene().houses);}sim.generate(20261005);return o}""")
     h0 = pg.evaluate("sim.scene().houses")
     check("房屋数量够（默认种子至少 35 栋，20 个种子每个至少 20 栋）", h0 >= 35 and min(hc) >= 20, f"默认 {h0} 栋；20 个种子 最少 {min(hc)} · 平均 {sum(hc)/len(hc):.0f} 栋")
@@ -428,11 +431,11 @@ with sync_playwright() as p:
     oktb = bool(tb) and all(tb.get(k, 0) > 0 for k in ("农田", "房屋落位", "房屋候选"))
     check("分段计时输出完整（农田、房屋落位、房屋候选三段可读）", oktb, str(top3))
     print(f"[d4] 512 米分段耗时前三：{top3}（农田+落位+候选占大头，分块缓存先做这三段）")
-    # ===== D4 第二步：路段空间索引加速（只提速不改输出：指纹必须与 v0.13.5 完全一致）=====
+    # ===== D4 第二步：路段空间索引加速（只提速不改输出：指纹与基线一致；基线在 r22 限坡按段长改动后更新）=====
     fps = {}
-    for tgv, want in (("A", "785b2ccc"), ("B", "017b1b3e"), ("C", "017b1b3e")):
+    for tgv, want in (("A", "e9fb6d9c"), ("B", "ec1ac907"), ("C", "ec1ac907")):
         fps[tgv] = pg.evaluate("(tg)=>{sim.setParams({size:512,town:'m',tg:tg,relief:1,mc:true,zones:true,river:true});sim.generate(3);return sim.fingerprint();}", tgv)
-    check("空间索引后场景与 v0.13.5 完全一致（512A/512B/512C 指纹不变）", fps == {"A": "785b2ccc", "B": "017b1b3e", "C": "017b1b3e"}, json.dumps(fps))
+    check("场景输出稳定（512A/512B/512C 指纹与 r22 限坡改动后的基线一致）", fps == {"A": "e9fb6d9c", "B": "ec1ac907", "C": "ec1ac907"}, json.dumps(fps))
     print(f"[d4] 空间索引后指纹：{fps}")
     # ===== D4 分块缓存第一小步：农田复用（拖动只重算附近，远处农田沿用；开关默认关）=====
     pd = pg.evaluate("sim.params().partial")
