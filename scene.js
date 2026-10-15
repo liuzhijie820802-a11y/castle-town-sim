@@ -201,8 +201,10 @@ function build(ctx){
       if(!S.centers.some(c=>Math.hypot(pp[0][0]-c.x,pp[0][1]-c.z)<12)&&!(S.square&&Math.hypot(pp[0][0]-S.square.x,pp[0][1]-S.square.z)<12)){
         const P0=pp[0],a0=Math.atan2(pp[1][1]-P0[1],pp[1][0]-P0[0]),gx=Math.floor(P0[0]/6),gz=Math.floor(P0[1]/6),NR=1;const NA=[];
         for(let dx=-NR;dx<=NR;dx++)for(let dz=-NR;dz<=NR;dz++){const L=RP.get((gx+dx)+','+(gz+dz));if(L)for(const q of L)if(q.r!==r&&Math.hypot(q.x-P0[0],q.z-P0[1])<5.5)NA.push(q.ang);}
-        if(NA.length&&Math.min.apply(null,NA.map(a=>lineDa(a0,a)))<0.56){let h=null;for(let stp=0.05;stp<=0.901;stp+=0.05){for(const sg of [1,-1]){const hh=a0+sg*stp;let ok=true;for(const na of NA)if(lineDa(hh,na)<0.61){ok=false;break;}if(ok){h=hh;break;}}if(h!==null)break;}          if(h!==null){const M=[P0[0]+Math.cos(h)*2.2,P0[1]+Math.sin(h)*2.2],aM=Math.atan2(pp[1][1]-M[1],pp[1][0]-M[0]);
-            if(inMap(M[0],M[1],1)&&riverDist(M[0],M[1])>=BED+1.5&&Math.abs(angDiff(aM,h))<=0.8)r.pts=[P0,M].concat(pp.slice(1));}}}}}
+        if(NA.length&&Math.min.apply(null,NA.map(a=>lineDa(a0,a)))<0.56){let h=null;for(let stp=0.05;stp<=0.901;stp+=0.05){for(const sg of [1,-1]){const hh=a0+sg*stp;let ok=true;for(const na of NA)if(lineDa(hh,na)<0.61){ok=false;break;}if(ok){h=hh;break;}}if(h!==null)break;}          if(h!==null){const M=[P0[0]+Math.cos(h)*2.2,P0[1]+Math.sin(h)*2.2];
+            // r31：过渡点直连第 1 个点会急掉头（转角护栏拒）时，跳到第 2/3 个点再接上，环路线型其余不变；转过头的弯仍限在 0.8 弧度内，中点不许落水
+            if(inMap(M[0],M[1],1)&&riverDist(M[0],M[1])>=BED+1.5)for(let n=1;n<=3&&n<pp.length-1;n++){const aM=Math.atan2(pp[n][1]-M[1],pp[n][0]-M[0]);
+              if(Math.abs(angDiff(aM,h))<=0.8&&riverDist((M[0]+pp[n][0])/2,(M[1]+pp[n][1])/2)>=BED+1.5){r.pts=[P0,M].concat(pp.slice(n));r.deck=r.pts.map(()=>null);r.kink=1;break;}}}}}}}
   const g0=S.gate||{x:K.x+ux*K.r,z:K.z+uz*K.r};
   let T,aT;
   // r6：支巷照常生成（路线不变、不删），只检查它的第一段：如果起点紧挨着一条方向接近（夹角<32°）的别的路，就把起点沿母路挪到前后 2~8 米处，
@@ -314,7 +316,7 @@ function build(ctx){
   }
   lap('路网');
   // 线形平滑：去掉逐步转向留下的折线（两端不动）
-  for(const r of S.roads){if(r.locked)continue;const p=r.pts,wt=(()=>{const w=p.map(q=>riverDist(q[0],q[1])<BED+1.5);for(let it=0;it<p.length;it++){let ch=false;for(let i=0;i<p.length;i++)if(!w[i]&&ed.waterAt(p[i][0],p[i][1])&&((i>0&&w[i-1])||(i<p.length-1&&w[i+1]))){w[i]=true;ch=true;}if(!ch)break;}return w;})();for(let it=0;it<3;it++){const q=p.map(v=>v.slice());for(let i=1;i<p.length-1;i++){q[i][0]=(p[i-1][0]+p[i][0]*2+p[i+1][0])/4;q[i][1]=(p[i-1][1]+p[i][1]*2+p[i+1][1])/4;}for(let i=1;i<p.length-1;i++)if(!wt[i]){p[i][0]=q[i][0];p[i][1]=q[i][1];}}} // 桥段（河道内的点）不参与平滑，保持直线
+  for(const r of S.roads){if(r.locked)continue;const p=r.pts,wt=(()=>{const w=p.map(q=>riverDist(q[0],q[1])<BED+1.5);for(let it=0;it<p.length;it++){let ch=false;for(let i=0;i<p.length;i++)if(!w[i]&&ed.waterAt(p[i][0],p[i][1])&&((i>0&&w[i-1])||(i<p.length-1&&w[i+1]))){w[i]=true;ch=true;}if(!ch)break;}return w;})();for(let it=0;it<3;it++){const q=p.map(v=>v.slice());for(let i=1;i<p.length-1;i++){q[i][0]=(p[i-1][0]+p[i][0]*2+p[i+1][0])/4;q[i][1]=(p[i-1][1]+p[i][1]*2+p[i+1][1])/4;}for(let i=1;i<p.length-1;i++)if(!wt[i]&&!(r.kink&&i<=r.kink)){p[i][0]=q[i][0];p[i][1]=q[i][1];}}} // 桥段（河道内的点）不参与平滑，保持直线
   { // r8：一条路（主路除外）的开头或结尾一段贴着别的路平行走（约 6~7 米内、夹角<23°）时，把这段剪掉，从两路分开的地方用一小段直接接到那条路上
     const PG=new Map(),pang=(p,i)=>{const a=p[Math.max(0,i-1)],b=p[Math.min(p.length-1,i+1)];return Math.atan2(b[1]-a[1],b[0]-a[0]);};
     const idx=()=>{PG.clear();S.roads.forEach((r,k)=>{const p=r.pts;for(let i=0;i<p.length;i++){const key=Math.floor(p[i][0]/8)+','+Math.floor(p[i][1]/8);let L=PG.get(key);if(!L)PG.set(key,L=[]);L.push({k,x:p[i][0],z:p[i][1],ang:pang(p,i),w:r.w});}});};

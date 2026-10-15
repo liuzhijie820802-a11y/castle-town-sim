@@ -479,16 +479,20 @@ with sync_playwright() as p:
     oktb = bool(tb) and all(tb.get(k, 0) > 0 for k in ("农田", "房屋落位", "房屋候选"))
     check("分段计时输出完整（农田、房屋落位、房屋候选三段可读）", oktb, str(top3))
     print(f"[d4] 512 米分段耗时前三：{top3}（农田+落位+候选占大头，分块缓存先做这三段）")
-    # ===== D4 第二步：路段空间索引加速（只提速不改输出：指纹与基线一致；基线在 r22 限坡按段长改动后更新）=====
+    # ===== D4 第二步：路段空间索引加速（只提速不改输出：指纹与基线一致；基线在 r22 限坡按段长改动后更新；r31 过渡点防平滑后 B/C 基线合法更新为 580ded51，已核实差异只在带过渡点的环路坐标）=====
     fps = {}
-    for tgv, want in (("A", "fed7a0de"), ("B", "ec1ac907"), ("C", "ec1ac907")):
+    for tgv, want in (("A", "fed7a0de"), ("B", "580ded51"), ("C", "580ded51")):
         fps[tgv] = pg.evaluate("(tg)=>{sim.setParams({size:512,town:'m',tg:tg,relief:1,mc:true,zones:true,river:true});sim.generate(3);return sim.fingerprint();}", tgv)
-    check("场景输出稳定（512A/512B/512C 指纹与 r22 限坡改动后的基线一致）", fps == {"A": "fed7a0de", "B": "ec1ac907", "C": "ec1ac907"}, json.dumps(fps))
+    check("场景输出稳定（512A/512B/512C 指纹与 r31 防平滑改动后的基线一致）", fps == {"A": "fed7a0de", "B": "580ded51", "C": "580ded51"}, json.dumps(fps))
     print(f"[d4] 空间索引后指纹：{fps}")
     # ===== r30：环路出发点偏转（起点贴着已有路浅角出发时插过渡点，首段与附近所有路段夹角≥35°）；12 个探针种子 512A 的尖角路口总数不得多于改前基线 11 =====
     q4s = pg.evaluate("""()=>{const o=[];for(const sd of [1,2,3,4,5,6,7,8,9,10,11,12]){sim.setParams({size:512,town:'m',tg:'A',relief:1,mc:true,zones:true,river:true});sim.generate(sd);const s=S.scene;o.push({sd,q4:s.quality.cnt.Q4,iso:s.conn.isolated,hard:S.audit.total});}return o;}""")
     check("环路出发点偏转后 12 个探针种子的尖角路口总数不高于改前基线 11，且无孤立、无硬规则违规", sum(r["q4"] for r in q4s)<=11 and all(r["iso"]==0 and r["hard"]==0 for r in q4s), json.dumps(q4s))
     print(f"[r30] 12 种子 512A 尖角路口：{[(r['sd'],r['q4']) for r in q4s]}，合计 {sum(r['q4'] for r in q4s)}（改前基线 11）")
+    # ===== r31：过渡点防平滑回退（环路出发偏转的过渡点不再被线形平滑抹掉），512A 种子 7 的挂账尖角清零，12 种子合计不高于 5 =====
+    s7 = next(r for r in q4s if r["sd"] == 7)
+    check("过渡点防平滑回退后 512A 种子 7 挂账尖角清零，12 种子尖角合计不高于 5", s7["q4"] == 0 and sum(r["q4"] for r in q4s) <= 5, json.dumps(q4s))
+    print(f"[r31] 种子 7 尖角：{s7['q4']}，12 种子合计 {sum(r['q4'] for r in q4s)}（改前 10）")
     # ===== D4 分块缓存第一小步：农田复用（拖动只重算附近，远处农田沿用；开关默认关）=====
     pd = pg.evaluate("sim.params().partial")
     check("局部重生成开关默认关闭（默认行为与 v0.13.6 一致）", pd is False, f"partial={pd}")
