@@ -485,6 +485,10 @@ with sync_playwright() as p:
         fps[tgv] = pg.evaluate("(tg)=>{sim.setParams({size:512,town:'m',tg:tg,relief:1,mc:true,zones:true,river:true});sim.generate(3);return sim.fingerprint();}", tgv)
     check("场景输出稳定（512A/512B/512C 指纹与 r22 限坡改动后的基线一致）", fps == {"A": "fed7a0de", "B": "ec1ac907", "C": "ec1ac907"}, json.dumps(fps))
     print(f"[d4] 空间索引后指纹：{fps}")
+    # ===== r30：环路出发点偏转（起点贴着已有路浅角出发时插过渡点，首段与附近所有路段夹角≥35°）；12 个探针种子 512A 的尖角路口总数不得多于改前基线 11 =====
+    q4s = pg.evaluate("""()=>{const o=[];for(const sd of [1,2,3,4,5,6,7,8,9,10,11,12]){sim.setParams({size:512,town:'m',tg:'A',relief:1,mc:true,zones:true,river:true});sim.generate(sd);const s=S.scene;o.push({sd,q4:s.quality.cnt.Q4,iso:s.conn.isolated,hard:S.audit.total});}return o;}""")
+    check("环路出发点偏转后 12 个探针种子的尖角路口总数不高于改前基线 11，且无孤立、无硬规则违规", sum(r["q4"] for r in q4s)<=11 and all(r["iso"]==0 and r["hard"]==0 for r in q4s), json.dumps(q4s))
+    print(f"[r30] 12 种子 512A 尖角路口：{[(r['sd'],r['q4']) for r in q4s]}，合计 {sum(r['q4'] for r in q4s)}（改前基线 11）")
     # ===== D4 分块缓存第一小步：农田复用（拖动只重算附近，远处农田沿用；开关默认关）=====
     pd = pg.evaluate("sim.params().partial")
     check("局部重生成开关默认关闭（默认行为与 v0.13.6 一致）", pd is False, f"partial={pd}")

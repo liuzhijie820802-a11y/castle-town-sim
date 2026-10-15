@@ -196,7 +196,13 @@ function build(ctx){
     const parPt=(p,a)=>{const gx=Math.floor(p[0]/6),gz=Math.floor(p[1]/6);for(let dx=-2;dx<=2;dx++)for(let dz=-2;dz<=2;dz++){const L=RP.get((gx+dx)+','+(gz+dz));if(L)for(const q of L)if(Math.hypot(q.x-p[0],q.z-p[1])<DIM.ROAD_W+3&&lineDa(a,q.ang)<0.4)return true;}return false;};
     // r7：整段几乎都贴着已有道路平行走（7 米内、夹角<23°的点占 8 成以上）的环路段不建，它只是旧路旁边的一条重复路
     const dup=pp=>{let n=0;for(let i=0;i<pp.length;i++){const a=pp[Math.max(0,i-1)],b=pp[Math.min(pp.length-1,i+1)];if(parPt(pp[i],Math.atan2(b[1]-a[1],b[0]-a[0])))n++;}return n>=0.8*pp.length;};
-    for(const pp of pieces)if(pp.length>4&&!dup(pp)){const r={pts:pp,w:DIM.ROAD_W,main:false,ring:true,c:C,deck:pp.map(()=>null)};S.roads.push(r);addRP(r);}}
+    for(const pp of pieces)if(pp.length>4&&!dup(pp)){const r={pts:pp,w:DIM.ROAD_W,main:false,ring:true,c:C,deck:pp.map(()=>null)};S.roads.push(r);addRP(r);
+      // r30：环路起点贴着已有路浅角出发（5.5 米内有道路点、夹角<32°）时，在起点后插一个过渡点，把首段转到与附近所有路段夹角都≥35°（主路是弯的，只对最近一段清角不够），消掉出发尖角；只动起点后一小段，环路线型不变。广场和中心 12 米内不动（那里尖角不计）。
+      if(!S.centers.some(c=>Math.hypot(pp[0][0]-c.x,pp[0][1]-c.z)<12)&&!(S.square&&Math.hypot(pp[0][0]-S.square.x,pp[0][1]-S.square.z)<12)){
+        const P0=pp[0],a0=Math.atan2(pp[1][1]-P0[1],pp[1][0]-P0[0]),gx=Math.floor(P0[0]/6),gz=Math.floor(P0[1]/6),NR=1;const NA=[];
+        for(let dx=-NR;dx<=NR;dx++)for(let dz=-NR;dz<=NR;dz++){const L=RP.get((gx+dx)+','+(gz+dz));if(L)for(const q of L)if(q.r!==r&&Math.hypot(q.x-P0[0],q.z-P0[1])<5.5)NA.push(q.ang);}
+        if(NA.length&&Math.min.apply(null,NA.map(a=>lineDa(a0,a)))<0.56){let h=null;for(let stp=0.05;stp<=0.901;stp+=0.05){for(const sg of [1,-1]){const hh=a0+sg*stp;let ok=true;for(const na of NA)if(lineDa(hh,na)<0.61){ok=false;break;}if(ok){h=hh;break;}}if(h!==null)break;}          if(h!==null){const M=[P0[0]+Math.cos(h)*2.2,P0[1]+Math.sin(h)*2.2],aM=Math.atan2(pp[1][1]-M[1],pp[1][0]-M[0]);
+            if(inMap(M[0],M[1],1)&&riverDist(M[0],M[1])>=BED+1.5&&Math.abs(angDiff(aM,h))<=0.8)r.pts=[P0,M].concat(pp.slice(1));}}}}}
   const g0=S.gate||{x:K.x+ux*K.r,z:K.z+uz*K.r};
   let T,aT;
   // r6：支巷照常生成（路线不变、不删），只检查它的第一段：如果起点紧挨着一条方向接近（夹角<32°）的别的路，就把起点沿母路挪到前后 2~8 米处，
