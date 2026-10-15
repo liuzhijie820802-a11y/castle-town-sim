@@ -340,6 +340,8 @@ function build(ctx){
     for(let it=0;it<4;it++){for(let i=0;i<n;i++)if(fix[i])s[i]=fy[i];
       for(let i=1;i<n;i++)if(!fix[i])s[i]=clamp(s[i],s[i-1]-mg[i-1],s[i-1]+mg[i-1]);for(let i=n-2;i>=0;i--)if(!fix[i])s[i]=clamp(s[i],s[i+1]-mg[i],s[i+1]+mg[i]);}
     for(let i=0;i<n;i++)r.deck[i]=wt[i]?s[i]+0.3:null;
+    const dk=r.deck.slice(); // r28：桥面两端各向外延 1 个点搭到岸上（桥台），消除桥头台阶——路肩格的水面角点把地形插值拉向河床，桥缘出现 >50% 的台阶；延展按原桥面算，避免连环外扩
+    for(let i=0;i<n;i++)if(dk[i]!==null){if(i>0&&dk[i-1]===null)r.deck[i-1]=s[i-1]+0.3;if(i<n-1&&dk[i+1]===null)r.deck[i+1]=s[i+1]+0.3;}
     ed.road(r,s,r.w/2+0.8,3);});
   lap('路基');
 

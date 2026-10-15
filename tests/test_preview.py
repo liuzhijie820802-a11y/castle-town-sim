@@ -146,6 +146,24 @@ with sync_playwright() as p:
         for(let i=0;i<n;i++)if(wt[i]&&r.deck[i]===null)o.push('seed'+sd+':路'+sc.roads.indexOf(r)+'点'+i);}}
     sim.setParams({walls:2,town:'m',river:true,relief:1,size:256});sim.generate(20261005);return o}""")
     check("连着湿带的水面格路段都有桥面高度覆盖（3 个种子）", not cw, "; ".join(cw[:5]))
+    # r28：桥面两端向外延 1 点（桥台）后，桥面外端与路肩相接的路段坡度不得超标（桥头台阶不得回来）
+    be = pg.evaluate("""()=>{sim.setParams({size:512,town:'m',tg:'A',relief:1});const o=[];
+    for(const sd of [3,7,20261005]){sim.generate(sd);const sc=S.scene,HA=window.heightAt;let mx=0;
+      const rs=(r,x,z)=>{const p=r.pts;let best=null,bd=1e9;
+        for(let i=0;i<p.length-1;i++){const ax=p[i][0],az=p[i][1],bx=p[i+1][0],bz=p[i+1][1],dx=bx-ax,dz=bz-az,l=dx*dx+dz*dz;
+          let t=l?((x-ax)*dx+(z-az)*dz)/l:0;t=Math.max(0,Math.min(1,t));const d=Math.hypot(x-ax-t*dx,z-az-t*dz);
+          if(d<=r.w/2&&d<bd){bd=d;const da=r.deck[i],db=r.deck[i+1];
+            if(da===null&&db===null)best=HA(x,z)+0.12;
+            else{const ya=da===null?HA(ax,az)+0.12:da,yb=db===null?HA(bx,bz)+0.12:db;best=ya+(yb-ya)*t;}}}
+        return best;};
+      for(const r of sc.roads)for(let i=0;i<r.pts.length-1;i++){
+        if((r.deck[i]===null)===(r.deck[i+1]===null))continue;
+        const a=r.pts[i],b=r.pts[i+1],ya=rs(r,a[0],a[1]),yb=rs(r,b[0],b[1]);
+        if(ya===null||yb===null)continue;const L=Math.hypot(b[0]-a[0],b[1]-a[1])||1;
+        mx=Math.max(mx,Math.abs(yb-ya)/L);}
+      o.push('seed'+sd+':'+Math.round(mx*1000)/10+'%');}
+    sim.setParams({walls:2,town:'m',river:true,relief:1,size:256});sim.generate(20261005);return o}""")
+    check("桥头台阶：桥面外端相邻路段坡度不超过 30%（3 个种子）", not any(float(x.split(':')[1][:-1])>30 for x in be), "; ".join(be))
     hc = pg.evaluate("""()=>{const o=[];for(let s=1;s<=20;s++){sim.generate(s);o.push(sim.scene().houses);}sim.generate(20261005);return o}""")
     h0 = pg.evaluate("sim.scene().houses")
     check("房屋数量够（默认种子至少 35 栋，20 个种子每个至少 20 栋）", h0 >= 35 and min(hc) >= 20, f"默认 {h0} 栋；20 个种子 最少 {min(hc)} · 平均 {sum(hc)/len(hc):.0f} 栋")
