@@ -314,6 +314,21 @@ with sync_playwright() as p:
     check("农田数量跟着房屋数走（18 个场景，约 8 栋房一块田，收成下限一半、上限翻倍内）", not fq1, f"不合格 {fq1}"[:300])
     fq2 = [r["k"]+f"最远{r['f'] and r['f']['roadFar']}米" for r in fq if not r["f"] or r["f"]["roadFar"] > 40]
     check("田接路网（每块田边离最近的路不超过 40 米）", not fq2, f"不合格 {fq2}"[:300])
+    # ===== D2 补检测（r36）：设计文档「农业区配套」里还没落的两条 =====
+    ag = pg.evaluate("""()=>{const o=[];for(const tg of ['A','B','C'])for(let sd=1;sd<=6;sd++){sim.setParams({size:512,town:'m',tg,relief:1,mc:true,river:true,zones:true});sim.generate(sd);
+      const G=S.scene,gate=G.gate?{x:G.gate.x,z:G.gate.z}:null,hubs=sim.hubs().hubs.filter(h=>h.type==='集市');
+      const refs=[];if(gate)refs.push(gate);for(const h of hubs)refs.push(h);
+      let fmax=0,far=null,farea=0;
+      for(const f of G.fields){let dm=1e9;for(const rf of refs){const d=Math.hypot(f.x-rf.x,f.z-rf.z);if(d<dm)dm=d;}
+        const edge=Math.max(0,dm-Math.hypot(f.w,f.d)/2);if(edge>fmax){fmax=edge;far=[Math.round(f.x),Math.round(f.z)];}farea+=f.w*f.d;}
+      const houses=G.boxes.filter(b=>b.kind==='house').length;
+      const zn=sim.zones();const zAg=zn&&zn.area&&zn.area['农业区']||0;
+      o.push({k:tg+sd,fmax:Math.round(fmax),far,zAg,houses,fArea:Math.round(farea)});}return o}""")
+    ag1 = [r["k"]+f"最远{r['fmax']}米@{r['far']}" for r in ag if r["fmax"] > 600]
+    check("田都在城门（或集市中心）600 米内（设计文档：离最近城门或集市路程 ≤600 米；512 米 18 个场景；口径：直线距离，按田边缘算）", not ag1, f"不合格 {ag1}"[:300] if ag1 else f"实测最远 {max(r['fmax'] for r in ag)} 米")
+    ag2 = [r["k"]+f"达成{round(100*r['zAg']/max(1,r['houses']*400))}%" for r in ag if r["zAg"] < 0.8*r["houses"]*400]
+    frange = [round(100*r['fArea']/max(1,r['houses']*400)) for r in ag]
+    check("农业区面积达成率 ≥80%（需求=房屋数×每户耕地 400 ㎡，按设计文档；口径：农业区分区面积，512 米 18 个场景）", not ag2, (f"不合格 {ag2}"[:300] if ag2 else f"实测 {min(round(100*r['zAg']/max(1,r['houses']*400)) for r in ag)}%~{max(round(100*r['zAg']/max(1,r['houses']*400)) for r in ag)}%") + f"；注：实际田块面积口径只有 {min(frange)}%~{max(frange)}%，因田块数按每 8 栋房一块田（r13 定），与 400 ㎡/户差距大，已请用户定方向")
     fo1 = pg.evaluate("()=>{sim.setParams({size:512,tg:'A',mc:true,zones:true});sim.generate(3);return sim.fingerprint()}")
     pg.evaluate("sim.setParams({zones:false});sim.generate(3)"); fo2 = pg.evaluate("sim.fingerprint()")
     pg.evaluate("sim.setParams({zones:false});sim.generate(3)"); fo3 = pg.evaluate("sim.fingerprint()")
