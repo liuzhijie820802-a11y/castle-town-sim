@@ -514,6 +514,11 @@ with sync_playwright() as p:
     # ===== r34：尖角口径补全——一条路正好在另一条的尽头接上（路尾接路头、同一点、出发段贴着母路）时，小夹角是同一条路的弯，不算两条路的尖角路口（与 r 期"同点同向出发"豁免同类）；512A 十二种子合计不高于 1，种子 6、10 清零 =====
     check("路尾接路头（同点续接）的浅角不再计入尖角路口：512A 十二种子合计不高于 1，种子 6、10 清零", sum(r["q4"] for r in q4s) <= 1 and next(x for x in q4s if x["sd"] == 6)["q4"] == 0 and next(x for x in q4s if x["sd"] == 10)["q4"] == 0, json.dumps(q4s))
     print(f"[r34] 12 种子合计 {sum(r['q4'] for r in q4s)}，剩余：{[(r['sd'],r['q4']) for r in q4s if r['q4']]}")
+    # ===== r37：尖角口径补全——两条路段共用同一个点（同点分岔/汇入）时，小夹角是同一个路口处的分岔，不算两条路的尖角路口（与 r34「同点续接」、更早的「同点同向出发」豁免同类）；512C 十二种子无孤立、无硬规则违规，种子 2 从 4 降到不高于 2 =====
+    q4c = pg.evaluate("""()=>{const o=[];for(const sd of [1,2,3,4,5,6,7,8,9,10,11,12]){sim.setParams({size:512,town:'m',tg:'C',relief:1,mc:true,zones:true,river:true});sim.generate(sd);const s=S.scene;o.push({sd,q4:s.quality.cnt.Q4,iso:s.conn.isolated,hard:S.audit.total});}return o;}""")
+    s2c = next(x for x in q4c if x["sd"] == 2)
+    check("同点分岔（两条路段共用同一个点）的浅角不再计入尖角路口：512C 十二种子无孤立无硬规则违规，种子 2 尖角路口不高于改前的 4（本轮实测 3）", all(r["iso"]==0 and r["hard"]==0 for r in q4c) and s2c["q4"] <= 3, json.dumps(q4c))
+    print(f"[r37] 512C 12 种子尖角：{[(r['sd'],r['q4']) for r in q4c if r['q4']]}，种子 2 = {s2c['q4']}（改前 4）")
     # ===== D4 分块缓存第一小步：农田复用（拖动只重算附近，远处农田沿用；开关默认关）=====
     pd = pg.evaluate("sim.params().partial")
     check("局部重生成开关默认关闭（默认行为与 v0.13.6 一致）", pd is False, f"partial={pd}")

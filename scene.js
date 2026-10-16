@@ -561,7 +561,9 @@ function build(ctx){
         // r34：一条路正好在另一条的尽头接上（路尾接路头、同一点、出发段贴着母路、夹角小）是同一条路的弯，不是两条路的尖角路口，与上面"同点同向出发"的豁免同类
         const cont=(t.i===0&&Math.hypot(t.a[0]-roadEnd(g.r)[0],t.a[1]-roadEnd(g.r)[1])<0.5&&segDist(t.a[0],t.a[1],g.a[0],g.a[1],g.b[0],g.b[1])<g.w/2+1)||(g.i===0&&Math.hypot(g.a[0]-roadEnd(t.r)[0],g.a[1]-roadEnd(t.r)[1])<0.5&&segDist(g.a[0],g.a[1],t.a[0],t.a[1],t.b[0],t.b[1])<t.w/2+1);
         const touch=(g.i===0&&segDist(g.a[0],g.a[1],t.a[0],t.a[1],t.b[0],t.b[1])<t.w/2+1)||(t.i===0&&segDist(t.a[0],t.a[1],g.a[0],g.a[1],g.b[0],g.b[1])<g.w/2+1);
-        if(!(same||cont)&&(touch||cross(g,t))&&!S.centers.some(c=>Math.hypot(mx-c.x,mz-c.z)<12)&&!(S.square&&Math.hypot(mx-S.square.x,mz-S.square.z)<12)){q4.add(pk);q4raw.push([mx,mz]);}}}}});
+        // r37：两条路段共用同一个点（同点分岔/汇入，任一端点重合在 0.5 米内）时，小夹角是同一个路口处的分岔或汇入，与「同点同向出发」「路尾接路头」豁免同类，不算两条路的尖角路口；真正的小角度交叉（两端不共点）仍照算
+        const sv=[[g.a,t.a],[g.a,t.b],[g.b,t.a],[g.b,t.b]].some(q=>Math.hypot(q[0][0]-q[1][0],q[0][1]-q[1][1])<0.5);
+        if(!(same||cont||sv)&&(touch||cross(g,t))&&!S.centers.some(c=>Math.hypot(mx-c.x,mz-c.z)<12)&&!(S.square&&Math.hypot(mx-S.square.x,mz-S.square.z)<12)){q4.add(pk);q4raw.push([mx,mz]);}}}}});
   // Q4 按路口计数：10 米内（约两倍路宽）的尖角接触点算同一个路口；路对数另存作严重度参考
   const q4c=[];for(const [x,z] of q4raw){const c=q4c.find(c=>Math.hypot(c.x-x,c.z-z)<10);if(c){c.n++;}else q4c.push({x,z,n:1});}
   Q.q4pairs=q4raw.length;for(const c of q4c)qa('Q4',c.x,c.z,c.n>1?'尖角路口（'+c.n+' 对路挤在一起）':'两条路以小于 30° 的尖角相交');
