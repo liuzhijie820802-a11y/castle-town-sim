@@ -550,6 +550,7 @@ function build(ctx){
   const SG=new Map();segs.forEach((g,k)=>{const kk=Math.floor((g.a[0]+g.b[0])/16)+','+Math.floor((g.a[1]+g.b[1])/16);let a=SG.get(kk);if(!a)SG.set(kk,a=[]);a.push(k);});
   const lineD=(a,b)=>{const d=Math.abs(angDiff(a,b));return Math.min(d,Math.PI-d);};
   const cross=(g,t)=>{const c=(p,q,r)=>(q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]);return c(g.a,g.b,t.a)*c(g.a,g.b,t.b)<0&&c(t.a,t.b,g.a)*c(t.a,t.b,g.b)<0;};
+  const roadEnd=r=>S.roads[r].pts[S.roads[r].pts.length-1];
   const parl=new Map(),q4=new Set(),q4raw=[];
   segs.forEach((g,k)=>{const mx=(g.a[0]+g.b[0])/2,mz=(g.a[1]+g.b[1])/2,gx=Math.floor(mx/8),gz=Math.floor(mz/8);
     for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++){const L=SG.get((gx+dx)+','+(gz+dz));if(!L)continue;for(const k2 of L){if(k2<=k)continue;const t=segs[k2];if(t.r===g.r)continue;
@@ -557,8 +558,10 @@ function build(ctx){
       const pk=Math.min(g.r,t.r)+'-'+Math.max(g.r,t.r);
       if(d<(g.w+t.w)/2+2.5&&ld<0.35){let e=parl.get(pk);if(!e)parl.set(pk,e={A:new Set(),B:new Set(),P:[]});e.A.add(k);e.B.add(k2);e.P.push([mx,mz]);continue;}
       if(ld<0.52&&!q4.has(pk)){const same=g.i===0&&t.i===0&&Math.hypot(g.a[0]-t.a[0],g.a[1]-t.a[1])<0.5;
+        // r34：一条路正好在另一条的尽头接上（路尾接路头、同一点、出发段贴着母路、夹角小）是同一条路的弯，不是两条路的尖角路口，与上面"同点同向出发"的豁免同类
+        const cont=(t.i===0&&Math.hypot(t.a[0]-roadEnd(g.r)[0],t.a[1]-roadEnd(g.r)[1])<0.5&&segDist(t.a[0],t.a[1],g.a[0],g.a[1],g.b[0],g.b[1])<g.w/2+1)||(g.i===0&&Math.hypot(g.a[0]-roadEnd(t.r)[0],g.a[1]-roadEnd(t.r)[1])<0.5&&segDist(g.a[0],g.a[1],t.a[0],t.a[1],t.b[0],t.b[1])<t.w/2+1);
         const touch=(g.i===0&&segDist(g.a[0],g.a[1],t.a[0],t.a[1],t.b[0],t.b[1])<t.w/2+1)||(t.i===0&&segDist(t.a[0],t.a[1],g.a[0],g.a[1],g.b[0],g.b[1])<g.w/2+1);
-        if(!same&&(touch||cross(g,t))&&!S.centers.some(c=>Math.hypot(mx-c.x,mz-c.z)<12)&&!(S.square&&Math.hypot(mx-S.square.x,mz-S.square.z)<12)){q4.add(pk);q4raw.push([mx,mz]);}}}}});
+        if(!(same||cont)&&(touch||cross(g,t))&&!S.centers.some(c=>Math.hypot(mx-c.x,mz-c.z)<12)&&!(S.square&&Math.hypot(mx-S.square.x,mz-S.square.z)<12)){q4.add(pk);q4raw.push([mx,mz]);}}}}});
   // Q4 按路口计数：10 米内（约两倍路宽）的尖角接触点算同一个路口；路对数另存作严重度参考
   const q4c=[];for(const [x,z] of q4raw){const c=q4c.find(c=>Math.hypot(c.x-x,c.z-z)<10);if(c){c.n++;}else q4c.push({x,z,n:1});}
   Q.q4pairs=q4raw.length;for(const c of q4c)qa('Q4',c.x,c.z,c.n>1?'尖角路口（'+c.n+' 对路挤在一起）':'两条路以小于 30° 的尖角相交');

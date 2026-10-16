@@ -496,6 +496,9 @@ with sync_playwright() as p:
     # ===== r32：枢纽路起点尖角修复（码头/作坊连接路起点直接落在已有路上，浅角出发也造成尖角路口；r6 同款把起点沿它压着的那条路挪 2~8 米消尖角，找不到合适位置就保持原样）；12 种子合计由 5 降到 4 =====
     check("枢纽路起点尖角修复后 512A 十二种子尖角合计不高于 4，种子 11 清零", sum(r["q4"] for r in q4s) <= 4 and next(x for x in q4s if x["sd"] == 11)["q4"] == 0, json.dumps(q4s))
     print(f"[r32] 12 种子合计 {sum(r['q4'] for r in q4s)}，剩余：{[(r['sd'],r['q4']) for r in q4s if r['q4']]}")
+    # ===== r34：尖角口径补全——一条路正好在另一条的尽头接上（路尾接路头、同一点、出发段贴着母路）时，小夹角是同一条路的弯，不算两条路的尖角路口（与 r 期"同点同向出发"豁免同类）；512A 十二种子合计不高于 1，种子 6、10 清零 =====
+    check("路尾接路头（同点续接）的浅角不再计入尖角路口：512A 十二种子合计不高于 1，种子 6、10 清零", sum(r["q4"] for r in q4s) <= 1 and next(x for x in q4s if x["sd"] == 6)["q4"] == 0 and next(x for x in q4s if x["sd"] == 10)["q4"] == 0, json.dumps(q4s))
+    print(f"[r34] 12 种子合计 {sum(r['q4'] for r in q4s)}，剩余：{[(r['sd'],r['q4']) for r in q4s if r['q4']]}")
     # ===== D4 分块缓存第一小步：农田复用（拖动只重算附近，远处农田沿用；开关默认关）=====
     pd = pg.evaluate("sim.params().partial")
     check("局部重生成开关默认关闭（默认行为与 v0.13.6 一致）", pd is False, f"partial={pd}")
