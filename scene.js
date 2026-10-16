@@ -210,11 +210,13 @@ function build(ctx){
   // r6：支巷照常生成（路线不变、不删），只检查它的第一段：如果起点紧挨着一条方向接近（夹角<32°）的别的路，就把起点沿母路挪到前后 2~8 米处，
   //     让第一段和附近每条路的夹角都≥34°；找不到合适位置就保持原样。只动起点一个点，其余路线和临街地块不变。
   const sharpAt=(x,z,a,self,lim,th)=>{const gx=Math.floor(x/6),gz=Math.floor(z/6),R=Math.ceil(lim/6);for(let dx=-R;dx<=R;dx++)for(let dz=-R;dz<=R;dz++){const L=RP.get((gx+dx)+','+(gz+dz));if(L)for(const q of L)if(q.r!==self&&Math.hypot(q.x-x,q.z-z)<lim&&lineDa(a,q.ang)<th)return true;}return false;};
-  const fixStart=(p,i,r)=>{if(!r||r.pts.length<4)return;const P=r.pts,lim=r.w/2+3,a0=Math.atan2(P[1][1]-P[0][1],P[1][0]-P[0][0]);if(!sharpAt(P[0][0],P[0][1],a0,r,lim,0.56))return;
+  const fixStart=(p,i,r,ok)=>{if(!r||r.pts.length<4)return;const P=r.pts,lim=r.w/2+3,a0=Math.atan2(P[1][1]-P[0][1],P[1][0]-P[0][0]);if(!sharpAt(P[0][0],P[0][1],a0,r,lim,0.56))return;
     for(let k=1;k<=3&&k<P.length-1;k++)for(const o of [0,1,-1,2,-2,3,-3,4,-4]){const j=i+o;if(j<0||j>=p.length)continue;const q=p[j],T=P[k],L=Math.hypot(T[0]-q[0],T[1]-q[1]);if(L<2||L>10)continue;const a=Math.atan2(T[1]-q[1],T[0]-q[0]);
       const an=Math.atan2(P[k+1][1]-T[1],P[k+1][0]-T[0]);let dt=Math.abs(a-an)%(2*Math.PI);if(dt>Math.PI)dt=2*Math.PI-dt;if(dt>1.0)continue;
-      if(sharpAt(q[0],q[1],a,r,lim,0.6))continue;let wet=false;for(let u=0;u<=1.001;u+=0.25)if(riverDist(q[0]+(T[0]-q[0])*u,q[1]+(T[1]-q[1])*u)<BED+1.5)wet=true;if(wet)continue;r.pts=[[q[0],q[1]]].concat(P.slice(k));return;}};
+      if(sharpAt(q[0],q[1],a,r,lim,0.6))continue;let wet=false;for(let u=0;u<=1.001;u+=0.25)if(riverDist(q[0]+(T[0]-q[0])*u,q[1]+(T[1]-q[1])*u)<BED+1.5)wet=true;if(wet)continue;const np=[[q[0],q[1]]].concat(P.slice(k));if(ok&&!ok(np))continue;r.pts=np;return;}};
   const lane=(p,i,a,len)=>fixStart(p,i,makeRoad(p[i][0],p[i][1],a,len,DIM.ROAD_W,false,null,true));
+  // r32：枢纽连接路（码头/作坊）的起点直接落在某条已有路上，浅角出发同样造成尖角路口；r6 同款把起点沿它压着的那条路挪 2~8 米消尖角，找不到合适位置就保持原样。是否真消掉了尖角要等线形平滑之后才知道，所以这里只记住挪动前的折线（_preHF），到平滑后再复验、没用就退回
+  const hubFix=(r,q)=>{const host=S.roads.find(o=>o!==r&&o.pts.some(p=>p[0]===q[0]&&p[1]===q[1]));if(!host)return;r._preHF=r.pts;fixStart(host.pts,host.pts.findIndex(p=>p[0]===q[0]&&p[1]===q[1]),r);};
   const ringLanes=()=>{for(const r of S.roads.filter(r=>r.ring&&!r.laned)){r.laned=true;const p=r.pts,C=r.c;for(let i=8;i<p.length-3;i+=12){const a=Math.atan2(p[i+1][1]-p[i-1][1],p[i+1][0]-p[i-1][0]);
     const out=Math.cos(a+Math.PI/2)*(p[i][0]-C.x)+Math.sin(a+Math.PI/2)*(p[i][1]-C.z)>0?1:-1;lane(p,i,a+out*Math.PI/2,18+rnd()*12);}}};
   if(mode==='A'){ // A：城镇跟随城堡，从城门主路上的广场出发，环路绕城堡
@@ -296,7 +298,7 @@ function build(ctx){
     const link=hb=>{const L=RPs.filter(q=>side(q[0],q[1])===side(hb.x,hb.z)).map(q=>[q,Math.hypot(q[0]-hb.x,q[1]-hb.z)]).sort((a,b)=>a[1]-b[1]);if(!L.length)return false;if(L[0][1]<5){hb.link=0;return true;}
       const starts=[];for(const c of L){if(starts.length>=14||c[1]>L[0][1]+120)break;if(starts.every(o=>Math.hypot(o[0][0]-c[0][0],o[0][1]-c[0][1])>=8))starts.push(c);}
       for(const [q,dd] of starts){const n0=S.roads.length,r=makeRoad(q[0],q[1],Math.atan2(hb.z-q[1],hb.x-q[0]),dd*2.4+16,DIM.ROAD_W,false,[hb.x,hb.z]),e=r.pts[r.pts.length-1];
-        if(r.pts.length>1&&Math.hypot(e[0]-hb.x,e[1]-hb.z)<6){r.hub=hb.type;r.main=true;hb.link=Math.round((r.pts.length-1)*2);return true;}
+        if(r.pts.length>1&&Math.hypot(e[0]-hb.x,e[1]-hb.z)<6){r.hub=hb.type;r.main=true;hubFix(r,q);hb.link=Math.round((r.pts.length-1)*2);return true;}
         if(S.roads.length>n0)S.roads.splice(S.roads.indexOf(r),1);}
       return false;};
     const rank=(ok,score)=>{const L=[];for(let z=12;z<=SIZE-12;z+=4)for(let x=12;x<=SIZE-12;x+=4){if(ok(x,z))L.push({x,z,v:score(x,z)});}return L.sort((a,b)=>b.v-a.v);};
@@ -317,6 +319,14 @@ function build(ctx){
   lap('路网');
   // 线形平滑：去掉逐步转向留下的折线（两端不动）
   for(const r of S.roads){if(r.locked)continue;const p=r.pts,wt=(()=>{const w=p.map(q=>riverDist(q[0],q[1])<BED+1.5);for(let it=0;it<p.length;it++){let ch=false;for(let i=0;i<p.length;i++)if(!w[i]&&ed.waterAt(p[i][0],p[i][1])&&((i>0&&w[i-1])||(i<p.length-1&&w[i+1]))){w[i]=true;ch=true;}if(!ch)break;}return w;})();for(let it=0;it<3;it++){const q=p.map(v=>v.slice());for(let i=1;i<p.length-1;i++){q[i][0]=(p[i-1][0]+p[i][0]*2+p[i+1][0])/4;q[i][1]=(p[i-1][1]+p[i][1]*2+p[i+1][1])/4;}for(let i=1;i<p.length-1;i++)if(!wt[i]&&!(r.kink&&i<=r.kink)){p[i][0]=q[i][0];p[i][1]=q[i][1];}}} // 桥段（河道内的点）不参与平滑，保持直线
+  // r32：枢纽连接路（码头/作坊）起点尖角的复验。线形平滑会改动路口角度，所以到这里才用 Q4 同口径（与所贴路成小于 30° 尖角：贴着或相交）检查挪过的枢纽路：
+  // 仍尖说明这挪没消掉尖角、只会白改房屋地基平整，退回挪动前的折线并对它重跑一遍上面的线形平滑，保证与从未挪过时完全一致；已不尖的保留
+  const hubSharp=(r,host,pts)=>{const a0=Math.atan2(pts[1][1]-pts[0][1],pts[1][0]-pts[0][0]);for(let i=0;i<host.pts.length-1;i++){const A=host.pts[i],B=host.pts[i+1],hA=Math.atan2(B[1]-A[1],B[0]-A[0]);const d=Math.abs(angDiff(a0,hA));if(Math.min(d,Math.PI-d)>=0.52)continue;
+    if(segDist(pts[0][0],pts[0][1],A[0],A[1],B[0],B[1])<host.w/2+1)return true;const cr=(p,q,t)=>(q[0]-p[0])*(t[1]-p[1])-(q[1]-p[1])*(t[0]-p[0]);if(cr(pts[0],pts[1],A)*cr(pts[0],pts[1],B)<0&&cr(A,B,pts[0])*cr(A,B,pts[1])<0)return true;}return false;};
+  const reSmooth=r=>{const p=r.pts,wt=(()=>{const w=p.map(q=>riverDist(q[0],q[1])<BED+1.5);for(let it=0;it<p.length;it++){let ch=false;for(let i=0;i<p.length;i++)if(!w[i]&&ed.waterAt(p[i][0],p[i][1])&&((i>0&&w[i-1])||(i<p.length-1&&w[i+1]))){w[i]=true;ch=true;}if(!ch)break;}return w;})();for(let it=0;it<3;it++){const q=p.map(v=>v.slice());for(let i=1;i<p.length-1;i++){q[i][0]=(p[i-1][0]+p[i][0]*2+p[i+1][0])/4;q[i][1]=(p[i-1][1]+p[i][1]*2+p[i+1][1])/4;}for(let i=1;i<p.length-1;i++)if(!wt[i]&&!(r.kink&&i<=r.kink)){p[i][0]=q[i][0];p[i][1]=q[i][1];}}};
+  for(const r of S.roads){if(!r.hub||!r._preHF||r.pts===r._preHF)continue;let host=null,bd=2.5;
+    for(const o of S.roads){if(o===r)continue;for(const q of o.pts){const e=Math.hypot(q[0]-r.pts[0][0],q[1]-r.pts[0][1]);if(e<bd){bd=e;host=o;}}}
+    if(!host||hubSharp(r,host,r.pts)){r.pts=r._preHF;reSmooth(r);}}
   { // r8：一条路（主路除外）的开头或结尾一段贴着别的路平行走（约 6~7 米内、夹角<23°）时，把这段剪掉，从两路分开的地方用一小段直接接到那条路上
     const PG=new Map(),pang=(p,i)=>{const a=p[Math.max(0,i-1)],b=p[Math.min(p.length-1,i+1)];return Math.atan2(b[1]-a[1],b[0]-a[0]);};
     const idx=()=>{PG.clear();S.roads.forEach((r,k)=>{const p=r.pts;for(let i=0;i<p.length;i++){const key=Math.floor(p[i][0]/8)+','+Math.floor(p[i][1]/8);let L=PG.get(key);if(!L)PG.set(key,L=[]);L.push({k,x:p[i][0],z:p[i][1],ang:pang(p,i),w:r.w});}});};

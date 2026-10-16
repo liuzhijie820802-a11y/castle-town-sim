@@ -493,6 +493,9 @@ with sync_playwright() as p:
     s7 = next(r for r in q4s if r["sd"] == 7)
     check("过渡点防平滑回退后 512A 种子 7 挂账尖角清零，12 种子尖角合计不高于 5", s7["q4"] == 0 and sum(r["q4"] for r in q4s) <= 5, json.dumps(q4s))
     print(f"[r31] 种子 7 尖角：{s7['q4']}，12 种子合计 {sum(r['q4'] for r in q4s)}（改前 10）")
+    # ===== r32：枢纽路起点尖角修复（码头/作坊连接路起点直接落在已有路上，浅角出发也造成尖角路口；r6 同款把起点沿它压着的那条路挪 2~8 米消尖角，找不到合适位置就保持原样）；12 种子合计由 5 降到 4 =====
+    check("枢纽路起点尖角修复后 512A 十二种子尖角合计不高于 4，种子 11 清零", sum(r["q4"] for r in q4s) <= 4 and next(x for x in q4s if x["sd"] == 11)["q4"] == 0, json.dumps(q4s))
+    print(f"[r32] 12 种子合计 {sum(r['q4'] for r in q4s)}，剩余：{[(r['sd'],r['q4']) for r in q4s if r['q4']]}")
     # ===== D4 分块缓存第一小步：农田复用（拖动只重算附近，远处农田沿用；开关默认关）=====
     pd = pg.evaluate("sim.params().partial")
     check("局部重生成开关默认关闭（默认行为与 v0.13.6 一致）", pd is False, f"partial={pd}")
