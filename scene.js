@@ -327,6 +327,29 @@ function build(ctx){
   for(const r of S.roads){if(!r.hub||!r._preHF||r.pts===r._preHF)continue;let host=null,bd=2.5;
     for(const o of S.roads){if(o===r)continue;for(const q of o.pts){const e=Math.hypot(q[0]-r.pts[0][0],q[1]-r.pts[0][1]);if(e<bd){bd=e;host=o;}}}
     if(!host||hubSharp(r,host,r.pts)){r.pts=r._preHF;reSmooth(r);}}
+  { // r39：互楔对才挪——所有路生成并平滑完之后，只有当两条路的起点同时处于浅角状态且相距不超过 6 米（互相楔着的支路对，r38 探针里 512C 种子2 的两条环路支巷即此类）时，才把其中一条的起点沿任何一条近旁路挪 2~10 米消尖角（r38 全域版闸门拦下：不限对象地挪会牵动 512C/1024C 的房屋选位，故收窄到互楔对）；守卫同 r38：r6 同款（新起点不尖、转向不超过 1.0、避河）＋新首段与别的路段浅角接触/交叉的整段复验；候选索引按平滑后的现势几何现建；此时尚未整平、未放房屋。最多迭代 3 轮
+    for(let round=0;round<3;round++){let moved=false;
+      const A=[];S.roads.forEach((r,k)=>{if(r.locked||r.main)return;const p=r.pts;for(let i=0;i<p.length;i++){const pa=p[Math.max(0,i-1)],pb=p[Math.min(p.length-1,i+1)];A.push({x:p[i][0],z:p[i][1],ang:Math.atan2(pb[1]-pa[1],pb[0]-pa[0]),k});}});
+      const sharpNow=(x,z,a,self,th,w)=>{for(const q of A)if(q.k!==self&&Math.hypot(q.x-x,q.z-z)<w/2+3&&lineDa(a,q.ang)<th)return true;return false;};
+      const sharpStart=new Set();
+      for(let k=0;k<S.roads.length;k++){const r=S.roads[k];if(r.locked||r.main||r.kink||(r.ring&&!r.laned)||r.pts.length<4)continue;const P=r.pts,a0=Math.atan2(P[1][1]-P[0][1],P[1][0]-P[0][0]);
+        if(sharpNow(P[0][0],P[0][1],a0,k,0.56,r.w))sharpStart.add(k);}
+      for(let k=0;k<S.roads.length;k++){const r=S.roads[k];if(!sharpStart.has(k))continue;const P=r.pts;
+        let partner=-1;for(const j of sharpStart)if(j!==k&&Math.hypot(S.roads[j].pts[0][0]-P[0][0],S.roads[j].pts[0][1]-P[0][1])<=6){partner=j;break;}
+        if(partner<0)continue;
+        for(let kk=1;kk<=3&&kk<P.length-1&&!moved;kk++){const T=P[kk];
+          for(const q of A){if(q.k===k)continue;const L=Math.hypot(T[0]-q.x,T[1]-q.z);if(L<2||L>10)continue;
+            const a=Math.atan2(T[1]-q.z,T[0]-q.x);const an=Math.atan2(P[kk+1][1]-T[1],P[kk+1][0]-T[0]);let dt=Math.abs(a-an)%(2*Math.PI);if(dt>Math.PI)dt=2*Math.PI-dt;if(dt>1.0)continue;
+            if(sharpNow(q.x,q.z,a,k,0.6,r.w))continue;
+            let bad=false;const cr=(p,qq,t)=>(qq[0]-p[0])*(t[1]-p[1])-(qq[1]-p[1])*(t[0]-p[0]);
+            for(const o of S.roads){if(o===r)continue;const op=o.pts;for(let i2=0;i2<op.length-1;i2++){const B1=op[i2],B2=op[i2+1],ha=Math.atan2(B2[1]-B1[1],B2[0]-B1[0]);const dd=Math.abs(angDiff(a,ha));if(Math.min(dd,Math.PI-dd)>=0.52)continue;
+              if(segDist(q.x,q.z,B1[0],B1[1],B2[0],B2[1])<o.w/2+1||(cr([q.x,q.z],T,B1)*cr([q.x,q.z],T,B2)<0&&cr(B1,B2,[q.x,q.z])*cr(B1,B2,T)<0)){bad=true;break;}}if(bad)break;}
+            if(bad)continue;
+            let wet=false;for(let u=0;u<=1.001;u+=0.25)if(riverDist(q.x+(T[0]-q.x)*u,q.z+(T[1]-q.z)*u)<BED+1.5)wet=true;if(wet)continue;
+            r.pts=[[q.x,q.z]].concat(P.slice(kk));moved=true;break;}}
+      }
+      if(!moved)break;}
+  }
   { // r8：一条路（主路除外）的开头或结尾一段贴着别的路平行走（约 6~7 米内、夹角<23°）时，把这段剪掉，从两路分开的地方用一小段直接接到那条路上
     const PG=new Map(),pang=(p,i)=>{const a=p[Math.max(0,i-1)],b=p[Math.min(p.length-1,i+1)];return Math.atan2(b[1]-a[1],b[0]-a[0]);};
     const idx=()=>{PG.clear();S.roads.forEach((r,k)=>{const p=r.pts;for(let i=0;i<p.length;i++){const key=Math.floor(p[i][0]/8)+','+Math.floor(p[i][1]/8);let L=PG.get(key);if(!L)PG.set(key,L=[]);L.push({k,x:p[i][0],z:p[i][1],ang:pang(p,i),w:r.w});}});};
